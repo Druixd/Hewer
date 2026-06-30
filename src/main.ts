@@ -1,0 +1,49 @@
+import Phaser from "phaser";
+import "./styles.css";
+import { BootScene } from "./phaser/scenes/BootScene";
+import { GameplayScene } from "./phaser/scenes/GameplayScene";
+import { HudController, setHudController } from "./ui/hud/HudController";
+
+const gameRoot = document.querySelector<HTMLDivElement>("#game-root");
+const uiRoot = document.querySelector<HTMLDivElement>("#ui-root");
+
+if (!gameRoot || !uiRoot) {
+  throw new Error("HEWER root elements are missing.");
+}
+
+const hud = new HudController(uiRoot);
+setHudController(hud);
+
+const game = new Phaser.Game({
+  type: Phaser.AUTO,
+  parent: gameRoot,
+  backgroundColor: "#020205",
+  scale: {
+    mode: Phaser.Scale.RESIZE,
+    autoCenter: Phaser.Scale.CENTER_BOTH,
+    width: window.innerWidth,
+    height: window.innerHeight
+  },
+  physics: {
+    default: "arcade",
+    arcade: {
+      debug: false
+    }
+  },
+  input: {
+    mouse: {
+      target: gameRoot
+    }
+  },
+  render: {
+    antialias: false,
+    pixelArt: true,
+    roundPixels: true
+  },
+  scene: [BootScene, GameplayScene]
+});
+
+window.addEventListener("beforeunload", () => {
+  game.destroy(true);
+});
+
