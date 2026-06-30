@@ -27,8 +27,8 @@ Playable ships are called Hewers.
 
 Core controls:
 
-- WASD / Arrow Keys: move.
-- Mouse: aim.
+- WASD / Arrow Keys: move relative to cursor direction. W/Up moves toward the cursor, S/Down reverses, and A/D or Left/Right strafe.
+- Mouse: aim and define forward direction.
 - Left Click: fire mining laser / weapon.
 - Right Click: secondary ability.
 - Space: toggle laser intensity.
@@ -102,5 +102,6 @@ Out of scope for v0:
 
 The game should prioritize playfield readability. Persistent UI stays compact, mostly in the lower-left and edge zones. The center and lower-middle playfield should stay clear during normal play. Menus and run summaries are DOM overlays that appear only when the run is paused or finished.
 
-The visual target is not a generic dashboard. The HUD should feel like functional mining ship instrumentation: compact bars, mineral counters, small state readouts, and restrained transitions. Strong motion is reserved for danger, impact, mineral collection, boss breakout, and rewards.
+The minimap is a local navigation instrument, not a full level map. It should stay player-centered, show only nearby movable-area edges and in-range tactical markers, and avoid revealing the complete cave layout. Compass labels should not appear unless the game adds a real north/orientation system.
 
+The visual target is not a generic dashboard. The HUD should feel like functional mining ship instrumentation: compact bars, mineral counters, small state readouts, and restrained transitions. Strong motion is reserved for danger, impact, mineral collection, boss breakout, and rewards.

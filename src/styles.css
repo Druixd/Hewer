@@ -44,6 +44,7 @@ canvas {
 #ui-root {
   position: absolute;
   inset: 0;
+  z-index: 2;
   pointer-events: none;
   user-select: none;
 }
@@ -94,33 +95,45 @@ canvas {
 }
 
 .meter {
-  height: 8px;
+  height: 10px;
   overflow: hidden;
-  border: 1px solid rgba(255, 221, 126, 0.42);
-  background: rgba(0, 0, 0, 0.76);
+  border: 1.5px solid rgba(255, 255, 255, 0.4);
+  background: rgba(0, 0, 0, 0.88);
+}
+
+.meter.hull {
+  border-color: rgba(255, 85, 76, 0.55);
+}
+
+.meter.heat {
+  border-color: rgba(65, 230, 226, 0.55);
+}
+
+.meter.boss {
+  border-color: rgba(143, 120, 255, 0.65);
 }
 
 .meter i {
   display: block;
   width: 100%;
   height: 100%;
-  background:
-    repeating-linear-gradient(90deg, #fff7d0 0 10px, transparent 10px 13px),
-    #fff7d0;
+  background: repeating-linear-gradient(90deg, #fff7d0 0px, #fff7d0 6px, transparent 6px, transparent 8px);
   box-shadow: 0 0 10px rgba(255, 242, 174, 0.7);
+  transition: width 0.1s ease-out;
+}
+
+.meter.hull i {
+  background: repeating-linear-gradient(90deg, var(--red) 0px, var(--red) 6px, transparent 6px, transparent 8px);
+  box-shadow: 0 0 10px rgba(255, 85, 76, 0.8);
 }
 
 .meter.heat i {
-  background:
-    repeating-linear-gradient(90deg, #ff4c38 0 10px, transparent 10px 13px),
-    #ff4c38;
-  box-shadow: 0 0 10px rgba(255, 76, 56, 0.78);
+  background: repeating-linear-gradient(90deg, var(--cyan) 0px, var(--cyan) 6px, transparent 6px, transparent 8px);
+  box-shadow: 0 0 10px rgba(65, 230, 226, 0.8);
 }
 
 .meter.boss i {
-  background:
-    repeating-linear-gradient(90deg, #8f78ff 0 10px, transparent 10px 13px),
-    #8f78ff;
+  background: repeating-linear-gradient(90deg, var(--violet) 0px, var(--violet) 6px, transparent 6px, transparent 8px);
   box-shadow: 0 0 12px rgba(143, 120, 255, 0.82);
 }
 
@@ -143,26 +156,138 @@ canvas {
 
 .slot-row {
   display: grid;
-  grid-template-columns: repeat(4, 42px);
+  grid-template-columns: repeat(5, 48px);
   gap: 7px;
   margin-top: 5px;
 }
 
-.slot-row div {
-  height: 34px;
-  display: grid;
-  place-items: end center;
-  padding-bottom: 3px;
-  border: 1px solid rgba(255, 221, 126, 0.42);
-  color: rgba(255, 243, 196, 0.78);
-  background: rgba(0, 0, 0, 0.72);
+.slot {
+  height: 44px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  padding: 4px;
+  border: 1.5px solid rgba(255, 255, 255, 0.35);
+  color: var(--text);
+  background: rgba(8, 6, 12, 0.82);
   font-size: 9px;
-  font-weight: 700;
+  font-weight: 800;
+  border-radius: 2px;
+  box-shadow: inset 0 0 8px rgba(255, 255, 255, 0.05);
+}
+
+.slot-key {
+  align-self: flex-start;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 7.5px;
+  font-weight: 800;
+}
+
+.slot-name {
+  font-size: 8.5px;
+  font-weight: 900;
+  color: var(--text);
+  letter-spacing: 0.5px;
+}
+
+.slot:nth-child(1) { border-color: rgba(255, 194, 71, 0.55); }
+.slot:nth-child(2) { border-color: rgba(139, 109, 255, 0.55); }
+.slot:nth-child(3) { border-color: rgba(65, 230, 226, 0.55); }
+.slot:nth-child(4) { border-color: rgba(240, 93, 255, 0.55); }
+.slot:nth-child(5) { border-color: rgba(255, 85, 76, 0.55); }
+
+.hud-center {
+  position: absolute;
+  bottom: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  pointer-events: none;
+}
+
+.hud-score {
+  font-size: 28px;
+  font-weight: 900;
+  color: #ffd24c;
+  text-shadow: 0 0 10px rgba(255, 210, 76, 0.85);
+  letter-spacing: 2px;
+  line-height: 1;
+  font-family: 'Bahnschrift', monospace;
+}
+
+.hud-indicators {
+  display: flex;
+  gap: 12px;
+  font-size: 11px;
+  font-weight: 800;
+  background: rgba(0, 0, 0, 0.65);
+  padding: 3px 10px;
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
+.ind-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.ind-item.shimmer { color: var(--violet); text-shadow: 0 0 6px var(--violet); }
+.ind-item.voltaic { color: var(--cyan); text-shadow: 0 0 6px var(--cyan); }
+.ind-item.aetherium { color: var(--pink); text-shadow: 0 0 6px var(--pink); }
+.ind-item.ferrite { color: var(--amber); text-shadow: 0 0 6px var(--amber); }
+
+.hud-radar-wrapper {
+  position: absolute;
+  right: 20px;
+  bottom: 20px;
+  width: 110px;
+  height: 110px;
+  pointer-events: none;
+}
+
+.hud-radar-frame {
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  border: 2px solid rgba(240, 93, 255, 0.55); /* var(--pink) */
+  box-shadow: 0 0 12px rgba(240, 93, 255, 0.3), inset 0 0 16px rgba(240, 93, 255, 0.2);
+  overflow: hidden;
+  position: relative;
+  background: transparent;
+}
+
+.hud-radar-grid {
+  position: absolute;
+  inset: 0;
+  background: 
+    repeating-linear-gradient(rgba(240, 93, 255, 0.12) 0px, rgba(240, 93, 255, 0.12) 1px, transparent 1px, transparent 3px),
+    linear-gradient(90deg, rgba(240, 93, 255, 0.05) 1px, transparent 1px);
+  background-size: 100% 3px, 12px 100%;
+  border-radius: 50%;
+}
+
+.hud-radar-ping {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, rgba(240, 93, 255, 0.18) 0deg, rgba(240, 93, 255, 0.03) 120deg, transparent 240deg);
+  animation: radar-sweep 2.8s linear infinite;
+}
+
+@keyframes radar-sweep {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .dock-chip {
   position: absolute;
-  right: 22px;
+  right: 145px;
   bottom: 22px;
   display: grid;
   width: 28px;

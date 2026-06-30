@@ -14,3 +14,5 @@ Author: Nitish
 - [x] Implement compact DOM HUD and post-run upgrade UI.
 - [x] Run non-build verification and start the dev server.
 - [x] Improve the visual style toward the supplied references and remove extra in-game HUD panels.
+- [x] Implement cursor-forward movement for WASD and arrow-key controls.
+- [x] Update the minimap to show only local movable-area edges and remove the north marker.

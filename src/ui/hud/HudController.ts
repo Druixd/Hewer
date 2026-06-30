@@ -32,8 +32,14 @@ export class HudController {
     this.root.innerHTML = `
       <div class="hud-shell">
         <div class="hud-primary">
-          <div class="meter-row"><div class="meter hull"><i data-meter="hull"></i></div><b data-value="hull">100</b></div>
-          <div class="meter-row"><div class="meter heat"><i data-meter="heat"></i></div><b data-value="heat">0</b></div>
+          <div class="meter-row">
+            <div class="meter hull"><i data-meter="hull"></i></div>
+            <b data-value="hull">100</b>
+          </div>
+          <div class="meter-row">
+            <div class="meter heat"><i data-meter="heat"></i></div>
+            <b data-value="heat">0</b>
+          </div>
           <div class="ore-row">
             <div data-ore="ferrite"></div>
             <div data-ore="shimmer"></div>
@@ -41,16 +47,35 @@ export class HudController {
             <div data-ore="aetherium"></div>
           </div>
           <div class="slot-row">
-            <div>HEL</div>
-            <div>MIN</div>
-            <div data-value="intensity">LOW</div>
-            <div data-value="mood">QUIET</div>
+            <div class="slot"><span class="slot-key">MBL</span><span class="slot-name">LASER</span></div>
+            <div class="slot"><span class="slot-key">MBR</span><span class="slot-name">DASH</span></div>
+            <div class="slot"><span class="slot-key">1</span><span class="slot-name">HEAT</span></div>
+            <div class="slot"><span class="slot-key">2</span><span class="slot-name">MAGN</span></div>
+            <div class="slot"><span class="slot-key">3</span><span class="slot-name">HULL</span></div>
           </div>
         </div>
+        
+        <div class="hud-center">
+          <div class="hud-score" data-value="score">0</div>
+          <div class="hud-indicators">
+            <span class="ind-item shimmer">0 ✦</span>
+            <span class="ind-item voltaic">0 ❖</span>
+            <span class="ind-item aetherium">0 ⬢</span>
+            <span class="ind-item ferrite">0 ⬩</span>
+          </div>
+        </div>
+
         <div class="hud-boss" data-panel="boss">
           <div class="meter boss"><i data-meter="boss"></i></div><b data-value="boss">0</b>
         </div>
         <div class="dock-chip" data-panel="dock">E</div>
+        
+        <div class="hud-radar-wrapper">
+          <div class="hud-radar-frame">
+            <div class="hud-radar-grid"></div>
+            <div class="hud-radar-ping"></div>
+          </div>
+        </div>
       </div>
       <div class="pause-panel is-hidden" data-panel="pause">
         <div class="run-title">PAUSED</div>
@@ -72,8 +97,25 @@ export class HudController {
     setWidth(this.root, "heat", state.player.heat / state.stats.heatCapacity);
     setText(this.root, "hull", `${Math.ceil(state.player.hull)}`);
     setText(this.root, "heat", state.player.overheatedTimer > 0 ? "LOCK" : `${Math.round(state.player.heat)}`);
-    setText(this.root, "intensity", state.player.miningIntensity.toUpperCase());
-    setText(this.root, "mood", state.threat.mood.toUpperCase());
+
+    // Calculate current cargo value/score
+    const cargoValue = 
+      state.inventory.ferrite * ORE_CONFIG.ferrite.value +
+      state.inventory.shimmer * ORE_CONFIG.shimmer.value +
+      state.inventory.voltaic * ORE_CONFIG.voltaic.value +
+      state.inventory.aetherium * ORE_CONFIG.aetherium.value;
+    
+    setText(this.root, "score", `${cargoValue}`);
+
+    // Update bottom center indicators
+    const shimNode = this.root.querySelector<HTMLElement>(".hud-indicators .shimmer");
+    if (shimNode) shimNode.textContent = `${state.inventory.shimmer} ✦`;
+    const voltNode = this.root.querySelector<HTMLElement>(".hud-indicators .voltaic");
+    if (voltNode) voltNode.textContent = `${state.inventory.voltaic} ❖`;
+    const aethNode = this.root.querySelector<HTMLElement>(".hud-indicators .aetherium");
+    if (aethNode) aethNode.textContent = `${state.inventory.aetherium} ⬢`;
+    const ferrNode = this.root.querySelector<HTMLElement>(".hud-indicators .ferrite");
+    if (ferrNode) ferrNode.textContent = `${state.inventory.ferrite} ⬩`;
 
     for (const ore of Object.keys(ORE_CONFIG) as Array<keyof typeof ORE_CONFIG>) {
       const node = this.root.querySelector<HTMLElement>(`[data-ore="${ore}"]`);
