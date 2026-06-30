@@ -296,7 +296,9 @@ export class GameplayScene extends Phaser.Scene {
     
     // Main camera follow configuration
     this.cameras.main.setBounds(0, 0, bounds.width, bounds.height);
-    this.cameras.main.startFollow(this.ship, true, 0.09, 0.09);
+    this.cameras.main.startFollow(this.ship, true, 0.075, 0.075);
+    this.cameras.main.setDeadzone(0, 0);
+    this.cameras.main.setFollowOffset(0, 0);
     this.cameras.main.setZoom(window.innerWidth < 720 ? 0.74 : 0.9);
 
     // Circular minimap camera in bottom-right corner

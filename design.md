@@ -17,6 +17,19 @@ Merope is a hollowed-out planet once mined by the Excavants. The launch design i
 
 The first playable slice implements The Shimmer Veins only. Cinder Hollows remains documented future scope.
 
+### Shimmer Veins Generation Rules
+
+The moveable area is any generated empty cave tile, including the spawn pocket, main tunnel ribbon, controlled pockets, branches, and vertical faults. Generation should happen in readable passes: build the ancient shell and basalt fill, carve moveable cave space, then place ore against that cave shape.
+
+Ores should feel like exposed veins in the cave wall, not random treasure buried in the center of nowhere. Ore clusters may touch open cave space and may extend 1-4 tile layers into adjacent solid terrain. Ore should not appear as isolated deep-solid noise with no nearby open-space path.
+
+Ore progression in The Shimmer Veins:
+
+- Ferrite: common surface-adjacent clusters, often close to open space.
+- Shimmer Crystal: uncommon clusters slightly deeper or farther from spawn.
+- Voltaic Dust: rare clusters deeper into walls and farther into the run.
+- Aetherium: very rare late-map/deeper clusters only.
+
 ## Player
 
 Playable ships are called Hewers.
@@ -101,6 +114,8 @@ Out of scope for v0:
 ## UX Direction
 
 The game should prioritize playfield readability. Persistent UI stays compact, mostly in the lower-left and edge zones. The center and lower-middle playfield should stay clear during normal play. Menus and run summaries are DOM overlays that appear only when the run is paused or finished.
+
+The main camera should keep the player centered with a slight delayed follow. It should not use aim look-ahead or offsets during normal play because aiming, mining, and HUD readability depend on a stable center point.
 
 The minimap is a local navigation instrument, not a full level map. It should stay player-centered, show only nearby movable-area edges and in-range tactical markers, and avoid revealing the complete cave layout. Compass labels should not appear unless the game adds a real north/orientation system.
 

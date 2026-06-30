@@ -16,3 +16,4 @@ Author: Nitish
 - [x] Improve the visual style toward the supplied references and remove extra in-game HUD panels.
 - [x] Implement cursor-forward movement for WASD and arrow-key controls.
 - [x] Update the minimap to show only local movable-area edges and remove the north marker.
+- [x] Rework ore distribution, level generation rules, and centered delayed camera follow.
