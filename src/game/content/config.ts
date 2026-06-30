@@ -87,8 +87,8 @@ export const BLOCK_CONFIG: Record<BlockId, BlockConfig> = {
     id: "basalt",
     label: "Basalt",
     health: 24,
-    color: 0x231a32,
-    glow: 0x4c3a80,
+    color: 0x0f0b17,
+    glow: 0x45346f,
     dropMin: 0,
     dropMax: 0
   },
@@ -96,8 +96,8 @@ export const BLOCK_CONFIG: Record<BlockId, BlockConfig> = {
     id: "ferrite",
     label: "Ferrite",
     health: 32,
-    color: 0x3b414b,
-    glow: 0xb8c5cc,
+    color: 0x171b21,
+    glow: 0x9ea8b0,
     drop: "ferrite",
     dropMin: 1,
     dropMax: 3
@@ -106,8 +106,8 @@ export const BLOCK_CONFIG: Record<BlockId, BlockConfig> = {
     id: "shimmer",
     label: "Shimmer Crystal",
     health: 44,
-    color: 0x3b2373,
-    glow: 0x8b6dff,
+    color: 0x1b1239,
+    glow: 0x8f78ff,
     drop: "shimmer",
     dropMin: 1,
     dropMax: 2
@@ -116,7 +116,7 @@ export const BLOCK_CONFIG: Record<BlockId, BlockConfig> = {
     id: "voltaic",
     label: "Voltaic Dust",
     health: 54,
-    color: 0x103f4b,
+    color: 0x08262d,
     glow: 0x41e6e2,
     drop: "voltaic",
     dropMin: 1,
@@ -126,7 +126,7 @@ export const BLOCK_CONFIG: Record<BlockId, BlockConfig> = {
     id: "aetherium",
     label: "Aetherium",
     health: 72,
-    color: 0x4a1e57,
+    color: 0x271031,
     glow: 0xf05dff,
     drop: "aetherium",
     dropMin: 1,
@@ -136,8 +136,8 @@ export const BLOCK_CONFIG: Record<BlockId, BlockConfig> = {
     id: "ancient",
     label: "Ancient Shell",
     health: 120,
-    color: 0x120f1a,
-    glow: 0x30234d,
+    color: 0x07060b,
+    glow: 0x211a35,
     dropMin: 0,
     dropMax: 0
   }
@@ -227,4 +227,3 @@ export function upgradeCost(id: UpgradeId, level: number): number {
   const config = UPGRADE_CONFIG[id];
   return config.baseCost + config.costStep * level + Math.floor(level * level * 16);
 }
-

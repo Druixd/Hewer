@@ -13,3 +13,4 @@ Author: Nitish
 - [x] Implement Shimmer enemy prototypes and Voltrix-lite threat breakout.
 - [x] Implement compact DOM HUD and post-run upgrade UI.
 - [x] Run non-build verification and start the dev server.
+- [x] Improve the visual style toward the supplied references and remove extra in-game HUD panels.

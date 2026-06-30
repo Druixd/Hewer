@@ -23,29 +23,33 @@ function createTileTextures(scene: Phaser.Scene): void {
     const config = BLOCK_CONFIG[block];
     const graphics = scene.make.graphics({ x: 0, y: 0 }, false);
     graphics.clear();
-    graphics.fillStyle(0x030306, block === "empty" ? 0 : 1);
-    graphics.fillRect(0, 0, 24, 24);
-
     if (block !== "empty") {
-      graphics.fillStyle(config.color, block === "ancient" ? 0.62 : 0.92);
-      graphics.fillRect(1, 1, 22, 22);
-      graphics.fillStyle(0x000000, 0.36);
-      graphics.fillRect(5, 5, 14, 14);
-      graphics.lineStyle(1, config.glow, block === "basalt" ? 0.34 : 0.82);
+      const isOre = block === "shimmer" || block === "voltaic" || block === "aetherium";
+      const isMetal = block === "ferrite";
+      const fillAlpha = block === "ancient" ? 0.14 : isOre ? 0.36 : isMetal ? 0.28 : 0.18;
+      const edgeAlpha = block === "ancient" ? 0.22 : isOre ? 0.82 : isMetal ? 0.54 : 0.28;
+      graphics.fillStyle(config.color, fillAlpha);
+      graphics.fillRect(2, 2, 20, 20);
+      graphics.fillStyle(0x000000, isOre ? 0.64 : 0.74);
+      graphics.fillRect(6, 6, 12, 12);
+      graphics.lineStyle(1, config.glow, edgeAlpha);
       graphics.strokeRect(1.5, 1.5, 21, 21);
-      graphics.lineStyle(1, config.glow, block === "basalt" ? 0.18 : 0.48);
-      graphics.strokeRect(6.5, 6.5, 11, 11);
+      graphics.lineStyle(1, config.glow, edgeAlpha * 0.46);
+      graphics.strokeRect(7.5, 7.5, 9, 9);
+      graphics.fillStyle(config.glow, block === "basalt" || block === "ancient" ? 0.1 : 0.2);
+      graphics.fillRect(3, 3, 2, 2);
+      graphics.fillRect(19, 18, 2, 2);
     }
 
     if (block === "shimmer" || block === "voltaic" || block === "aetherium") {
       graphics.fillStyle(config.glow, 0.95);
-      graphics.fillRect(8, 3, 7, 18);
+      graphics.fillRect(9, 3, 5, 18);
       graphics.fillStyle(0xffffff, 0.42);
-      graphics.fillRect(10, 5, 2, 12);
+      graphics.fillRect(10, 5, 1, 12);
     }
 
     if (block === "ferrite") {
-      graphics.fillStyle(0xd7e0e2, 0.55);
+      graphics.fillStyle(0xd7e0e2, 0.46);
       graphics.fillRect(6, 6, 4, 4);
       graphics.fillRect(14, 13, 4, 4);
     }
@@ -121,20 +125,21 @@ function createEnemyTextures(scene: Phaser.Scene): void {
 function createShipTexture(scene: Phaser.Scene): void {
   if (!scene.textures.exists(TEXTURES.ship)) {
     const graphics = scene.make.graphics({ x: 0, y: 0 }, false);
-    graphics.fillStyle(0x0d2f40, 0.7);
-    graphics.fillCircle(28, 22, 20);
-    graphics.lineStyle(2, 0x4beaff, 0.95);
-    graphics.strokeCircle(28, 22, 14);
-    graphics.fillStyle(0x46e6ff, 0.86);
-    graphics.fillTriangle(44, 22, 18, 8, 18, 36);
-    graphics.fillStyle(0xe9fbff, 1);
-    graphics.fillRect(21, 17, 10, 10);
-    graphics.lineStyle(2, 0xff4c6d, 0.9);
-    graphics.strokeCircle(27, 22, 5);
-    graphics.lineStyle(1, 0x8b6dff, 0.9);
-    graphics.strokeRect(8, 13, 10, 18);
-    graphics.strokeRect(30, 6, 8, 9);
-    graphics.strokeRect(30, 29, 8, 9);
+    graphics.fillStyle(0xffffff, 0.2);
+    graphics.fillCircle(26, 22, 20);
+    graphics.fillStyle(0xf8d54a, 0.95);
+    graphics.fillCircle(26, 22, 10);
+    graphics.fillStyle(0xfff4c0, 1);
+    graphics.fillTriangle(44, 22, 23, 12, 23, 32);
+    graphics.fillStyle(0xfff8dc, 0.95);
+    graphics.fillCircle(24, 22, 5);
+    graphics.lineStyle(2, 0xffc247, 0.9);
+    graphics.strokeCircle(26, 22, 13);
+    graphics.lineStyle(1, 0xffffff, 0.76);
+    graphics.lineBetween(14, 12, 5, 8);
+    graphics.lineBetween(14, 32, 5, 36);
+    graphics.fillStyle(0xffffff, 0.82);
+    graphics.fillCircle(9, 22, 3);
     graphics.generateTexture(TEXTURES.ship, 56, 44);
     graphics.destroy();
   }
@@ -204,4 +209,3 @@ function createParticle(scene: Phaser.Scene, key: string, color: number): void {
   graphics.generateTexture(key, 8, 8);
   graphics.destroy();
 }
-

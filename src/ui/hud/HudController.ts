@@ -31,25 +31,26 @@ export class HudController {
     this.root = root;
     this.root.innerHTML = `
       <div class="hud-shell">
-        <div class="hud-cluster hud-primary">
-          <div class="bar-row"><span>Hull</span><div class="meter"><i data-meter="hull"></i></div><b data-value="hull">100</b></div>
-          <div class="bar-row"><span>Heat</span><div class="meter heat"><i data-meter="heat"></i></div><b data-value="heat">0</b></div>
-          <div class="status-row">
-            <b data-value="intensity">LOW</b>
-            <b data-value="mood">QUIET</b>
-            <b data-value="seed">SEED</b>
+        <div class="hud-primary">
+          <div class="meter-row"><div class="meter hull"><i data-meter="hull"></i></div><b data-value="hull">100</b></div>
+          <div class="meter-row"><div class="meter heat"><i data-meter="heat"></i></div><b data-value="heat">0</b></div>
+          <div class="ore-row">
+            <div data-ore="ferrite"></div>
+            <div data-ore="shimmer"></div>
+            <div data-ore="voltaic"></div>
+            <div data-ore="aetherium"></div>
+          </div>
+          <div class="slot-row">
+            <div>HEL</div>
+            <div>MIN</div>
+            <div data-value="intensity">LOW</div>
+            <div data-value="mood">QUIET</div>
           </div>
         </div>
-        <div class="hud-cluster hud-cargo">
-          <div data-ore="ferrite"></div>
-          <div data-ore="shimmer"></div>
-          <div data-ore="voltaic"></div>
-          <div data-ore="aetherium"></div>
+        <div class="hud-boss" data-panel="boss">
+          <div class="meter boss"><i data-meter="boss"></i></div><b data-value="boss">0</b>
         </div>
-        <div class="hud-cluster hud-boss" data-panel="boss">
-          <div class="bar-row"><span>Voltrix</span><div class="meter boss"><i data-meter="boss"></i></div><b data-value="boss">0</b></div>
-        </div>
-        <div class="dock-chip" data-panel="dock">DOCK READY</div>
+        <div class="dock-chip" data-panel="dock">E</div>
       </div>
       <div class="pause-panel is-hidden" data-panel="pause">
         <div class="run-title">PAUSED</div>
@@ -73,12 +74,11 @@ export class HudController {
     setText(this.root, "heat", state.player.overheatedTimer > 0 ? "LOCK" : `${Math.round(state.player.heat)}`);
     setText(this.root, "intensity", state.player.miningIntensity.toUpperCase());
     setText(this.root, "mood", state.threat.mood.toUpperCase());
-    setText(this.root, "seed", state.world.seed.replace("merope-shimmer-", "#"));
 
     for (const ore of Object.keys(ORE_CONFIG) as Array<keyof typeof ORE_CONFIG>) {
       const node = this.root.querySelector<HTMLElement>(`[data-ore="${ore}"]`);
       if (node) {
-        node.textContent = `${ORE_CONFIG[ore].label}: ${state.inventory[ore]}`;
+        node.textContent = `${oreGlyph(ore)} ${state.inventory[ore]}`;
       }
     }
 
@@ -153,7 +153,7 @@ export class HudController {
       const node = this.root.querySelector<HTMLElement>(`[data-ore="${ore}"]`);
       if (node) {
         node.style.borderColor = ORE_CONFIG[ore].cssColor;
-        node.textContent = `${ORE_CONFIG[ore].label}: 0`;
+        node.textContent = `${oreGlyph(ore)} 0`;
       }
     }
   }
@@ -222,3 +222,15 @@ function formatTime(seconds: number): string {
   return `${minutes}:${rest}`;
 }
 
+function oreGlyph(ore: keyof typeof ORE_CONFIG): string {
+  if (ore === "ferrite") {
+    return "F";
+  }
+  if (ore === "shimmer") {
+    return "S";
+  }
+  if (ore === "voltaic") {
+    return "V";
+  }
+  return "A";
+}

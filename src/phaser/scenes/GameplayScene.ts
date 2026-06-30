@@ -77,18 +77,19 @@ export class GameplayScene extends Phaser.Scene {
   }
 
   private createWorldView(): void {
-    this.add.rectangle(0, 0, 12000, 8000, 0x020205, 1).setOrigin(0);
+    this.add.rectangle(0, 0, 12000, 8000, 0x000000, 1).setOrigin(0);
 
     const stars = this.add.graphics();
-    stars.fillStyle(0xffffff, 0.32);
     const bounds = worldBounds(this.state.world);
-    for (let i = 0; i < 180; i += 1) {
+    for (let i = 0; i < 120; i += 1) {
       const x = (i * 997) % bounds.width;
       const y = (i * 593) % bounds.height;
-      const alpha = 0.12 + ((i * 17) % 40) / 100;
-      stars.fillStyle(i % 5 === 0 ? 0xff9f43 : 0xe9fbff, alpha);
+      const alpha = 0.08 + ((i * 17) % 26) / 100;
+      stars.fillStyle(i % 6 === 0 ? 0xff7b32 : 0xf5fbff, alpha);
       stars.fillRect(x, y, i % 7 === 0 ? 2 : 1, 1);
     }
+
+    this.drawCavernAtmosphere();
 
     this.tileSprites = this.state.world.tiles.map((tile) => {
       if (!isSolid(tile)) {
@@ -97,12 +98,51 @@ export class GameplayScene extends Phaser.Scene {
 
       const texture = TEXTURES.tile(tile.type);
       const sprite = this.add.image(tile.x * TILE_SIZE + TILE_SIZE / 2, tile.y * TILE_SIZE + TILE_SIZE / 2, texture);
-      sprite.setAlpha(tile.type === "ancient" ? 0.68 : 0.96);
+      const alpha = tile.type === "ancient" ? 0.18 : tile.type === "basalt" ? 0.26 : tile.type === "ferrite" ? 0.48 : 0.92;
+      sprite.setAlpha(alpha);
+      sprite.setBlendMode(tile.type === "basalt" || tile.type === "ancient" ? Phaser.BlendModes.NORMAL : Phaser.BlendModes.ADD);
       if (tile.cracked) {
         sprite.setTint(0xd6ccff);
       }
       return sprite;
     });
+  }
+
+  private drawCavernAtmosphere(): void {
+    const haze = this.add.graphics().setDepth(0);
+    const edgeGlow = this.add.graphics().setDepth(1).setBlendMode(Phaser.BlendModes.ADD);
+
+    for (const tile of this.state.world.tiles) {
+      if (!isSolid(tile)) {
+        continue;
+      }
+
+      const x = tile.x * TILE_SIZE + TILE_SIZE / 2;
+      const y = tile.y * TILE_SIZE + TILE_SIZE / 2;
+
+      if (tile.type === "shimmer") {
+        edgeGlow.fillStyle(0x8066ff, 0.045);
+        edgeGlow.fillCircle(x, y, 58);
+      } else if (tile.type === "voltaic") {
+        edgeGlow.fillStyle(0x35e5df, 0.052);
+        edgeGlow.fillCircle(x, y, 52);
+      } else if (tile.type === "aetherium") {
+        edgeGlow.fillStyle(0xf05dff, 0.058);
+        edgeGlow.fillCircle(x, y, 68);
+      }
+
+      if ((tile.x * 31 + tile.y * 17) % 43 === 0 && tile.type !== "ancient") {
+        haze.fillStyle(tile.type === "basalt" ? 0x1b1430 : 0x39245f, 0.055);
+        haze.fillRect(tile.x * TILE_SIZE - 18, tile.y * TILE_SIZE - 18, TILE_SIZE * 4, TILE_SIZE * 3);
+      }
+    }
+
+    for (let i = 0; i < 34; i += 1) {
+      const x = (i * 547) % (this.state.world.width * TILE_SIZE);
+      const y = (i * 331) % (this.state.world.height * TILE_SIZE);
+      haze.fillStyle(i % 3 === 0 ? 0x2b1848 : 0x140d22, 0.08);
+      haze.fillRect(x, y, 120 + (i % 5) * 26, 42 + (i % 4) * 18);
+    }
   }
 
   private createActors(): void {
@@ -117,7 +157,7 @@ export class GameplayScene extends Phaser.Scene {
     const bounds = worldBounds(this.state.world);
     this.cameras.main.setBounds(0, 0, bounds.width, bounds.height);
     this.cameras.main.startFollow(this.ship, true, 0.09, 0.09);
-    this.cameras.main.setZoom(window.innerWidth < 720 ? 0.82 : 1);
+    this.cameras.main.setZoom(window.innerWidth < 720 ? 0.74 : 0.9);
   }
 
   private configureHud(): void {
@@ -371,4 +411,3 @@ export class GameplayScene extends Phaser.Scene {
     }
   }
 }
-
