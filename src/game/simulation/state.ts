@@ -1,4 +1,4 @@
-import { calculateRunValue, effectiveStats } from "./systems/progression";
+import { calculateRunValue, effectiveStats, ensureActiveTask, getActiveTask } from "./systems/progression";
 import type { GameState, InventoryState, RunOutcome, UpgradeState } from "./types";
 import { createInitialEnemies, createWorld } from "./world";
 
@@ -12,8 +12,10 @@ export function createEmptyInventory(): InventoryState {
 }
 
 export function createGameState(seed: string, upgrades: UpgradeState): GameState {
-  const world = createWorld(seed);
-  const stats = effectiveStats(upgrades);
+  const progress = ensureActiveTask(upgrades);
+  const activeTask = getActiveTask(progress);
+  const world = createWorld(seed, activeTask?.territory ?? progress.selectedTerritory, activeTask?.mapVariant ?? "ribbon");
+  const stats = effectiveStats(progress);
 
   return {
     world,
@@ -29,11 +31,12 @@ export function createGameState(seed: string, upgrades: UpgradeState): GameState
       overheatedTimer: 0,
       miningIntensity: "low",
       dashCooldown: 0,
+      bombCooldown: 0,
       invulnerableTimer: 0,
       collectionPulse: 0
     },
     inventory: createEmptyInventory(),
-    upgrades,
+    upgrades: progress,
     stats,
     threat: {
       value: 0,
@@ -44,6 +47,7 @@ export function createGameState(seed: string, upgrades: UpgradeState): GameState
     enemies: createInitialEnemies(world),
     pickups: [],
     hazards: [],
+    bombs: [],
     boss: {
       active: false,
       defeated: false,
@@ -79,7 +83,7 @@ export function finishRun(state: GameState, outcome: RunOutcome): void {
     return;
   }
 
-  const voltrixCore = outcome === "victory";
+  const voltrixCore = state.boss.defeated;
   const inventory = { ...state.inventory };
   const result = {
     outcome,
@@ -88,11 +92,13 @@ export function finishRun(state: GameState, outcome: RunOutcome): void {
     enemiesKilled: state.enemiesKilled,
     duration: state.elapsed,
     creditsEarned: calculateRunValue({ inventory, voltrixCore }),
-    voltrixCore
+    voltrixCore,
+    taskCompleted: Boolean(state.upgrades.activeTask?.completed),
+    activeTaskId: state.upgrades.activeTask?.taskId ?? null,
+    bossAchievement: voltrixCore ? "voltrixCore" as const : null
   };
 
   state.status = outcome;
   state.runResult = result;
   state.beam.active = false;
 }
-

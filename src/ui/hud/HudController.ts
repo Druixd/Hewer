@@ -1,10 +1,12 @@
-import { ORE_CONFIG, UPGRADE_CONFIG, upgradeCost } from "../../game/content/config";
+import { CRAFT_RECIPES, ORE_CONFIG, ORG_TASKS, TERRITORY_CONFIG, UPGRADE_CONFIG, upgradeCost } from "../../game/content/config";
+import { canCraftActiveTask, getActiveTask, getTaskRequirementProgress } from "../../game/simulation/systems/progression";
 import type { GameState, RunResult, UpgradeId, UpgradeState } from "../../game/simulation/types";
 
 interface HudHandlers {
   sameSeed: () => void;
   newRun: () => void;
   buyUpgrade: (id: UpgradeId) => UpgradeState;
+  craftObjective: () => UpgradeState;
   resume: () => void;
 }
 
@@ -48,11 +50,17 @@ export class HudController {
           </div>
           <div class="slot-row">
             <div class="slot"><span class="slot-key">MBL</span><span class="slot-name">LASER</span></div>
-            <div class="slot"><span class="slot-key">MBR</span><span class="slot-name">DASH</span></div>
-            <div class="slot"><span class="slot-key">1</span><span class="slot-name">HEAT</span></div>
-            <div class="slot"><span class="slot-key">2</span><span class="slot-name">MAGN</span></div>
-            <div class="slot"><span class="slot-key">3</span><span class="slot-name">HULL</span></div>
+            <div class="slot"><span class="slot-key">MBR</span><span class="slot-name">BOMB</span></div>
+            <div class="slot"><span class="slot-key">SHIFT</span><span class="slot-name">DASH</span></div>
+            <div class="slot"><span class="slot-key">SPC</span><span class="slot-name">HEAT</span></div>
+            <div class="slot"><span class="slot-key">E</span><span class="slot-name">BANK</span></div>
           </div>
+        </div>
+
+        <div class="hud-task" data-panel="task">
+          <div class="task-name" data-value="task-name">No active order</div>
+          <div class="task-meta" data-value="task-meta"></div>
+          <div class="task-progress" data-value="task-progress"></div>
         </div>
         
         <div class="hud-center">
@@ -92,7 +100,8 @@ export class HudController {
     this.handlers = handlers;
   }
 
-  update(state: GameState, progress: UpgradeState): void {
+  update(state: GameState, _progress: UpgradeState): void {
+    const progress = state.upgrades;
     setWidth(this.root, "hull", state.player.hull / state.player.maxHull);
     setWidth(this.root, "heat", state.player.heat / state.stats.heatCapacity);
     setText(this.root, "hull", `${Math.ceil(state.player.hull)}`);
@@ -137,9 +146,7 @@ export class HudController {
       dock.classList.toggle("is-hidden", dist > 72 || state.status !== "playing");
     }
 
-    if (this.runSummaryVisible && state.runResult) {
-      this.renderSummary(state.runResult, progress);
-    }
+    this.renderTaskHud(progress);
   }
 
   showRunSummary(result: RunResult, progress: UpgradeState): void {
@@ -188,6 +195,14 @@ export class HudController {
         }
       }
     }
+    if (action === "craft-objective") {
+      const progress = this.handlers.craftObjective();
+      const activeResult = this.root.querySelector<HTMLElement>('[data-panel="summary"]')?.dataset.result;
+      if (activeResult) {
+        const result = JSON.parse(activeResult) as RunResult;
+        this.renderSummary(result, progress);
+      }
+    }
   }
 
   private paintOreLabels(): void {
@@ -207,13 +222,24 @@ export class HudController {
     }
 
     panel.dataset.result = JSON.stringify(result);
-    const outcome = result.outcome === "victory" ? "VOLTRIX CORE SECURED" : result.outcome === "destroyed" ? "SHIP LOST" : "CARGO BANKED";
+    const outcome = result.outcome === "destroyed" ? "SHIP LOST" : "CARGO BANKED";
+    const task = result.activeTaskId ? ORG_TASKS.find((candidate) => candidate.id === result.activeTaskId) : getActiveTask(progress);
+    const taskLine = task ? getTaskRequirementProgress(progress, task) : "No active org order";
+    const recipe = task?.recipe ? CRAFT_RECIPES[task.recipe] : null;
+    const craftDisabled = !canCraftActiveTask(progress) ? "disabled" : "";
+    const craftButton = recipe && !progress.activeTask?.completed
+      ? `<button type="button" data-action="craft-objective" ${craftDisabled}>Craft ${recipe.label}</button>`
+      : "";
+    const taskState = progress.activeTask?.completed ? "Complete" : "In progress";
+    const bossLine = result.voltrixCore ? "Voltrix Core achieved" : "No boss achievement";
     const rows = [
       ["Credits", `+${result.creditsEarned}`],
       ["Blocks", `${result.minedBlocks}`],
       ["Kills", `${result.enemiesKilled}`],
       ["Time", formatTime(result.duration)],
-      ["Bank", `${progress.credits}`]
+      ["Bank", `${progress.credits}`],
+      ["Task", taskState],
+      ["Boss", bossLine]
     ];
 
     const upgrades = (Object.keys(UPGRADE_CONFIG) as UpgradeId[])
@@ -230,15 +256,38 @@ export class HudController {
 
     panel.innerHTML = `
       <div class="run-title">${outcome}</div>
+      <div class="summary-task">
+        <b>${task?.label ?? "No active org order"}</b>
+        <span>${taskLine}</span>
+      </div>
       <div class="run-grid">
         ${rows.map(([label, value]) => `<div><span>${label}</span><b>${value}</b></div>`).join("")}
       </div>
       <div class="upgrade-grid">${upgrades}</div>
       <div class="run-actions">
+        ${craftButton}
         <button type="button" data-action="same-seed">Same Seed</button>
         <button type="button" data-action="new-run">New Run</button>
       </div>
     `;
+  }
+
+  private renderTaskHud(progress: UpgradeState): void {
+    const panel = this.root.querySelector<HTMLElement>('[data-panel="task"]');
+    const name = this.root.querySelector<HTMLElement>('[data-value="task-name"]');
+    const meta = this.root.querySelector<HTMLElement>('[data-value="task-meta"]');
+    const line = this.root.querySelector<HTMLElement>('[data-value="task-progress"]');
+    const task = getActiveTask(progress);
+
+    if (!panel || !name || !meta || !line || !task || !progress.activeTask) {
+      panel?.classList.add("is-hidden");
+      return;
+    }
+
+    panel.classList.remove("is-hidden");
+    name.textContent = progress.activeTask.completed ? `${task.label} complete` : task.label;
+    meta.textContent = `${TERRITORY_CONFIG[task.territory].label} / ${task.mapVariant}`;
+    line.textContent = getTaskRequirementProgress(progress, task);
   }
 }
 

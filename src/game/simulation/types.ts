@@ -4,6 +4,10 @@ export type OreId = "ferrite" | "shimmer" | "voltaic" | "aetherium";
 export type BlockId = "empty" | "basalt" | "ferrite" | "shimmer" | "voltaic" | "aetherium" | "ancient";
 export type EnemyId = "arcWarden" | "prismStalker" | "sparkSac";
 export type UpgradeId = "laserPower" | "heatSink" | "magnetRadius" | "hull" | "engine";
+export type TerritoryId = "shimmerVeins" | "cinderHollows";
+export type MapVariantId = "ribbon" | "fracture" | "sink";
+export type ObjectiveItemId = "relayFrame" | "voltaicKeystone" | "cinderBrace";
+export type BossAchievementId = "voltrixCore" | "pyroclastMark";
 export type RunStatus = "playing" | "extracted" | "destroyed" | "victory";
 export type RunOutcome = Exclude<RunStatus, "playing">;
 
@@ -24,6 +28,8 @@ export interface TileState {
 
 export interface WorldState {
   seed: string;
+  territory: TerritoryId;
+  variant: MapVariantId;
   width: number;
   height: number;
   tileSize: number;
@@ -44,6 +50,7 @@ export interface PlayerState {
   overheatedTimer: number;
   miningIntensity: "low" | "high";
   dashCooldown: number;
+  bombCooldown: number;
   invulnerableTimer: number;
   collectionPulse: number;
 }
@@ -53,6 +60,50 @@ export interface InventoryState {
   shimmer: number;
   voltaic: number;
   aetherium: number;
+}
+
+export type InventoryCost = Partial<Record<OreId, number>>;
+
+export type TaskRequirement =
+  | {
+      kind: "collect";
+      ore: OreId;
+      amount: number;
+    }
+  | {
+      kind: "craft";
+      item: ObjectiveItemId;
+      amount: number;
+    };
+
+export interface CraftRecipe {
+  id: ObjectiveItemId;
+  label: string;
+  costs: InventoryCost;
+}
+
+export interface OrgTask {
+  id: string;
+  label: string;
+  territory: TerritoryId;
+  mapVariant: MapVariantId;
+  requirements: TaskRequirement[];
+  recipe?: ObjectiveItemId;
+  unlocksTerritory?: TerritoryId;
+}
+
+export interface ActiveTaskState {
+  taskId: string;
+  collected: InventoryState;
+  materials: InventoryState;
+  crafted: Partial<Record<ObjectiveItemId, number>>;
+  completed: boolean;
+}
+
+export interface BossAchievement {
+  id: BossAchievementId;
+  label: string;
+  territory: TerritoryId;
 }
 
 export interface UpgradeState {
@@ -65,6 +116,13 @@ export interface UpgradeState {
   totalRuns: number;
   totalMined: number;
   voltrixCores: number;
+  runSerial: number;
+  selectedTerritory: TerritoryId;
+  unlockedTerritories: TerritoryId[];
+  activeTask: ActiveTaskState | null;
+  completedTasks: string[];
+  craftedItems: Partial<Record<ObjectiveItemId, number>>;
+  bossAchievements: BossAchievementId[];
 }
 
 export interface EffectiveStats {
@@ -119,7 +177,7 @@ export interface PickupState {
 
 export interface HazardState {
   id: string;
-  kind: "lightning" | "sparkExplosion";
+  kind: "lightning" | "sparkExplosion" | "swarmExplosion";
   x1: number;
   y1: number;
   x2: number;
@@ -130,6 +188,18 @@ export interface HazardState {
   damageAt: number;
   damage: number;
   applied: boolean;
+}
+
+export interface BombState {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  age: number;
+  lifetime: number;
+  color: number;
 }
 
 export interface BossSegmentState {
@@ -169,6 +239,9 @@ export interface GameEvent {
     | "enemy-killed"
     | "player-hit"
     | "overheat"
+    | "player-dash"
+    | "swarm-bomb-fired"
+    | "swarm-bomb-exploded"
     | "boss-breakout"
     | "boss-hit"
     | "boss-defeated";
@@ -186,6 +259,9 @@ export interface RunResult {
   duration: number;
   creditsEarned: number;
   voltrixCore: boolean;
+  taskCompleted: boolean;
+  activeTaskId: string | null;
+  bossAchievement: BossAchievementId | null;
 }
 
 export interface GameState {
@@ -198,6 +274,7 @@ export interface GameState {
   enemies: EnemyState[];
   pickups: PickupState[];
   hazards: HazardState[];
+  bombs: BombState[];
   boss: BossState;
   beam: BeamState;
   events: GameEvent[];
@@ -213,8 +290,8 @@ export interface InputActions {
   aim: Vec2;
   primaryFire: boolean;
   secondaryAbility: boolean;
+  dashPressed: boolean;
   toggleIntensityPressed: boolean;
   pausePressed: boolean;
   extractPressed: boolean;
 }
-

@@ -12,6 +12,6 @@ export const TEXTURES = {
   particleWhite: "fx.particle.white",
   particleCyan: "fx.particle.cyan",
   particleAmber: "fx.particle.amber",
-  particleMagenta: "fx.particle.magenta"
+  particleMagenta: "fx.particle.magenta",
+  bombCore: "fx.bomb.swarm.core"
 } as const;
-

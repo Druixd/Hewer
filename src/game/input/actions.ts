@@ -6,9 +6,9 @@ export function createEmptyActions(): InputActions {
     aim: { x: 0, y: 0 },
     primaryFire: false,
     secondaryAbility: false,
+    dashPressed: false,
     toggleIntensityPressed: false,
     pausePressed: false,
     extractPressed: false
   };
 }
-

@@ -1,14 +1,22 @@
 import Phaser from "phaser";
 import { TEXTURES } from "../../game/assets/manifest";
+import { TERRITORY_CONFIG } from "../../game/content/config";
 import { createEmptyActions } from "../../game/input/actions";
 import { createGameState } from "../../game/simulation/state";
-import { bankRunResult, loadProgress, tryBuyUpgrade } from "../../game/simulation/systems/progression";
+import {
+  bankRunResult,
+  createRunSeed,
+  loadProgress,
+  prepareProgressForNewRun,
+  tryBuyUpgrade,
+  tryCraftActiveTask
+} from "../../game/simulation/systems/progression";
 import { updateGame } from "../../game/simulation/systems/update";
 import { TILE_SIZE, type GameEvent, type GameState, type InputActions, type UpgradeState } from "../../game/simulation/types";
 import { getTile, isSolid, worldBounds } from "../../game/simulation/world";
 import { getHudController } from "../../ui/hud/HudController";
 
-type KeyMap = Record<"W" | "A" | "S" | "D" | "UP" | "DOWN" | "LEFT" | "RIGHT" | "SPACE" | "ESC" | "E", Phaser.Input.Keyboard.Key>;
+type KeyMap = Record<"W" | "A" | "S" | "D" | "UP" | "DOWN" | "LEFT" | "RIGHT" | "SPACE" | "SHIFT" | "ESC" | "E", Phaser.Input.Keyboard.Key>;
 const MINIMAP_SIZE = 110;
 const MINIMAP_MARGIN = 20;
 const MINIMAP_ZOOM = 0.08;
@@ -24,10 +32,12 @@ export class GameplayScene extends Phaser.Scene {
   private beamGraphics!: Phaser.GameObjects.Graphics;
   private fieldGraphics!: Phaser.GameObjects.Graphics;
   private hazardGraphics!: Phaser.GameObjects.Graphics;
+  private playerLight!: Phaser.GameObjects.Image;
   private tileSprites: Array<Phaser.GameObjects.Image | null> = [];
   private tileGlows: Array<Phaser.GameObjects.Image[] | null> = [];
   private enemySprites = new Map<string, Phaser.GameObjects.Image>();
   private pickupSprites = new Map<string, Phaser.GameObjects.Image>();
+  private bombSprites = new Map<string, { core: Phaser.GameObjects.Image; glow: Phaser.GameObjects.Image }>();
   private bossHead: Phaser.GameObjects.Image | null = null;
   private bossSegments: Phaser.GameObjects.Image[] = [];
   private resultBanked = false;
@@ -45,20 +55,35 @@ export class GameplayScene extends Phaser.Scene {
   }
 
   create(data?: { seed?: string }): void {
+    this.resetViewCaches();
     this.progress = loadProgress();
-    const seed = data?.seed ?? `merope-shimmer-${this.progress.totalRuns + 1}`;
+    if (!data?.seed) {
+      this.progress = prepareProgressForNewRun(this.progress);
+    }
+    const seed = data?.seed ?? createRunSeed(this.progress);
     this.state = createGameState(seed, this.progress);
+    this.progress = this.state.upgrades;
     this.resultBanked = false;
     this.isPaused = false;
     this.lastTrailTime = 0;
 
     this.input.mouse?.disableContextMenu();
-    this.keys = this.input.keyboard!.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,ESC,E") as KeyMap;
+    this.keys = this.input.keyboard!.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,SHIFT,ESC,E") as KeyMap;
 
     this.createWorldView();
     this.createActors();
     this.configureCamera();
     this.configureHud();
+  }
+
+  private resetViewCaches(): void {
+    this.tileSprites = [];
+    this.tileGlows = [];
+    this.enemySprites.clear();
+    this.pickupSprites.clear();
+    this.bombSprites.clear();
+    this.bossHead = null;
+    this.bossSegments = [];
   }
 
   update(_time: number, deltaMs: number): void {
@@ -100,10 +125,10 @@ export class GameplayScene extends Phaser.Scene {
     const radiusSq = MINIMAP_RADIUS * MINIMAP_RADIUS;
 
     this.minimapGraphics.clear();
-    this.minimapGraphics.fillStyle(0x05060a, 0.82);
+    this.minimapGraphics.fillStyle(0x0a0908, 0.82);
     this.minimapGraphics.fillCircle(player.x, player.y, MINIMAP_RADIUS * 0.98);
 
-    this.minimapGraphics.lineStyle(8, 0x566f76, 0.44);
+    this.minimapGraphics.lineStyle(8, 0x6a5a42, 0.40);
     for (let y = centerTileY - MINIMAP_TILE_RANGE; y <= centerTileY + MINIMAP_TILE_RANGE; y += 1) {
       for (let x = centerTileX - MINIMAP_TILE_RANGE; x <= centerTileX + MINIMAP_TILE_RANGE; x += 1) {
         const tile = getTile(this.state.world, x, y);
@@ -126,7 +151,7 @@ export class GameplayScene extends Phaser.Scene {
       }
     }
 
-    this.minimapGraphics.fillStyle(0xff6a00, 0.95);
+    this.minimapGraphics.fillStyle(0xd4845a, 0.90);
     for (const enemy of this.state.enemies) {
       if (this.isInMinimapRange(enemy.x, enemy.y)) {
         this.minimapGraphics.fillCircle(enemy.x, enemy.y, 24);
@@ -134,13 +159,13 @@ export class GameplayScene extends Phaser.Scene {
     }
 
     if (this.isInMinimapRange(this.state.world.extraction.x, this.state.world.extraction.y)) {
-      this.minimapGraphics.fillStyle(0x00f3ff, 0.95);
+      this.minimapGraphics.fillStyle(0x5ab8a8, 0.90);
       this.minimapGraphics.fillCircle(this.state.world.extraction.x, this.state.world.extraction.y, 28);
     }
 
-    this.minimapGraphics.fillStyle(0xfff4a0, 1);
+    this.minimapGraphics.fillStyle(0xe8c86a, 1);
     this.minimapGraphics.fillCircle(player.x, player.y, 34);
-    this.minimapGraphics.fillStyle(0xffffff, 1);
+    this.minimapGraphics.fillStyle(0xe8d8b4, 1);
     this.minimapGraphics.fillTriangle(
       player.x + Math.cos(player.angle) * 36,
       player.y + Math.sin(player.angle) * 36,
@@ -179,16 +204,16 @@ export class GameplayScene extends Phaser.Scene {
   }
 
   private createWorldView(): void {
-    // Very dark purple-black backdrop instead of absolute pitch black
-    this.backdropRect = this.add.rectangle(0, 0, 12000, 8000, 0x030206, 1).setOrigin(0);
+    this.backdropRect = this.add.rectangle(0, 0, 12000, 8000, 0x06080f, 1).setOrigin(0);
 
     this.starsGraphics = this.add.graphics();
     const bounds = worldBounds(this.state.world);
-    for (let i = 0; i < 120; i += 1) {
+    for (let i = 0; i < 140; i += 1) {
       const x = (i * 997) % bounds.width;
       const y = (i * 593) % bounds.height;
-      const alpha = 0.05 + ((i * 17) % 20) / 100;
-      this.starsGraphics.fillStyle(i % 6 === 0 ? 0xff7b32 : 0xf5fbff, alpha);
+      const alpha = 0.04 + ((i * 17) % 26) / 100;
+      const color = i % 5 === 0 ? 0xd4845a : i % 8 === 0 ? 0x5ab8a8 : 0xf0e4cc;
+      this.starsGraphics.fillStyle(color, alpha);
       this.starsGraphics.fillRect(x, y, i % 7 === 0 ? 2 : 1, 1);
     }
 
@@ -205,13 +230,13 @@ export class GameplayScene extends Phaser.Scene {
 
       let glowColor: number | null = null;
       if (tile.type === "shimmer") {
-        glowColor = 0x8b6dff;
+        glowColor = 0x8a6db8;
       } else if (tile.type === "voltaic") {
-        glowColor = 0x41e6e2;
+        glowColor = 0x5ab8a8;
       } else if (tile.type === "aetherium") {
-        glowColor = 0xf05dff;
+        glowColor = 0xc47a8a;
       } else if (tile.type === "ferrite") {
-        glowColor = 0xffa347; // Warm amber-orange glow
+        glowColor = 0xc4a86e; // Warm brass glow
       }
 
       if (glowColor !== null) {
@@ -244,7 +269,7 @@ export class GameplayScene extends Phaser.Scene {
       sprite.setAlpha(alpha);
       sprite.setBlendMode(Phaser.BlendModes.NORMAL);
       if (tile.cracked) {
-        sprite.setTint(0xd6ccff);
+        sprite.setTint(0xd6c8a8);
       }
       return sprite;
     });
@@ -253,9 +278,8 @@ export class GameplayScene extends Phaser.Scene {
   private drawCavernAtmosphere(): void {
     const bounds = worldBounds(this.state.world);
 
-    // Faint grid lines across the entire world to ensure there's always visibility
     this.cavernGrid = this.add.graphics().setDepth(0);
-    this.cavernGrid.lineStyle(1, 0x1d1630, 0.28);
+    this.cavernGrid.lineStyle(1, 0x1e1a12, 0.08);
     for (let x = 0; x < bounds.width; x += TILE_SIZE) {
       this.cavernGrid.lineBetween(x, 0, x, bounds.height);
     }
@@ -263,8 +287,7 @@ export class GameplayScene extends Phaser.Scene {
       this.cavernGrid.lineBetween(0, y, bounds.width, y);
     }
 
-    // Add ambient cave glow clouds randomly
-    const ambientColors = [0x4d220a, 0x1f143d, 0x0f2a33, 0x2e0d36]; // Warm orange, deep purple, cyan, magenta
+    const ambientColors = (TERRITORY_CONFIG[this.state.world.territory] ?? TERRITORY_CONFIG.shimmerVeins).palette.ambient;
     for (let i = 0; i < 90; i++) {
       const cx = (i * 997) % bounds.width;
       const cy = (i * 613) % bounds.height;
@@ -273,7 +296,7 @@ export class GameplayScene extends Phaser.Scene {
         .setDepth(0)
         .setOrigin(0.5)
         .setScale(4.5 + (i % 4) * 1.5)
-        .setAlpha(0.2)
+        .setAlpha(0.08)
         .setTint(color)
         .setBlendMode(Phaser.BlendModes.ADD);
     }
@@ -283,6 +306,13 @@ export class GameplayScene extends Phaser.Scene {
     this.beamGraphics = this.add.graphics().setDepth(8);
     this.fieldGraphics = this.add.graphics().setDepth(4);
     this.hazardGraphics = this.add.graphics().setDepth(9);
+    this.playerLight = this.add.image(this.state.player.x, this.state.player.y, "fx.glow.radial")
+      .setDepth(5)
+      .setOrigin(0.5)
+      .setScale(4.8)
+      .setAlpha(0.34)
+      .setTint(0xc4a86e)
+      .setBlendMode(Phaser.BlendModes.ADD);
     this.reticle = this.add.image(this.state.player.x, this.state.player.y, TEXTURES.reticle).setDepth(20).setBlendMode(Phaser.BlendModes.ADD);
     this.ship = this.add.image(this.state.player.x, this.state.player.y, TEXTURES.ship).setDepth(14);
 
@@ -320,6 +350,7 @@ export class GameplayScene extends Phaser.Scene {
     if (this.beamGraphics) this.minimap.ignore(this.beamGraphics);
     if (this.fieldGraphics) this.minimap.ignore(this.fieldGraphics);
     if (this.hazardGraphics) this.minimap.ignore(this.hazardGraphics);
+    if (this.playerLight) this.minimap.ignore(this.playerLight);
     if (this.reticle) this.minimap.ignore(this.reticle);
     if (this.ship) this.minimap.ignore(this.ship);
     this.tileSprites.forEach((sprite) => {
@@ -347,9 +378,17 @@ export class GameplayScene extends Phaser.Scene {
     const hud = getHudController();
     hud.setHandlers({
       sameSeed: () => this.scene.restart({ seed: this.state.world.seed }),
-      newRun: () => this.scene.restart({ seed: `merope-shimmer-${Date.now().toString(36)}` }),
+      newRun: () => {
+        this.progress = prepareProgressForNewRun(this.progress);
+        this.scene.restart({ seed: createRunSeed(this.progress) });
+      },
       buyUpgrade: (id) => {
         this.progress = tryBuyUpgrade(this.progress, id);
+        return this.progress;
+      },
+      craftObjective: () => {
+        this.progress = tryCraftActiveTask(this.progress);
+        this.state.upgrades = this.progress;
         return this.progress;
       },
       resume: () => {
@@ -399,6 +438,7 @@ export class GameplayScene extends Phaser.Scene {
     actions.aim = { x: pointer.worldX, y: pointer.worldY };
     actions.primaryFire = pointer.leftButtonDown();
     actions.secondaryAbility = pointer.rightButtonDown();
+    actions.dashPressed = Phaser.Input.Keyboard.JustDown(this.keys.SHIFT);
     actions.toggleIntensityPressed = Phaser.Input.Keyboard.JustDown(this.keys.SPACE);
     actions.pausePressed = false;
     actions.extractPressed = Phaser.Input.Keyboard.JustDown(this.keys.E);
@@ -411,42 +451,60 @@ export class GameplayScene extends Phaser.Scene {
     this.ship.setRotation(player.angle);
     this.ship.setScale(player.collectionPulse > 0 ? 1.08 : 1);
     this.ship.setAlpha(player.invulnerableTimer > 0 ? 0.72 : 1);
+    this.playerLight.setPosition(player.x, player.y);
+    this.playerLight.setScale(player.invulnerableTimer > 0 ? 5.4 : 4.8);
+    this.playerLight.setAlpha(player.invulnerableTimer > 0 ? 0.46 : 0.34);
     this.reticle.setPosition(this.input.activePointer.worldX, this.input.activePointer.worldY);
 
-    // Spawning expanding white bubble trail particles behind the ship
     const speed = Math.hypot(player.vx, player.vy);
-    if (speed > 15 && this.time.now - this.lastTrailTime > 35) {
+    if (speed > 35 && this.time.now - this.lastTrailTime > 24) {
       this.lastTrailTime = this.time.now;
-      
-      const angle = player.angle;
-      const backX = player.x - Math.cos(angle) * 16 + (Math.random() - 0.5) * 4;
-      const backY = player.y - Math.sin(angle) * 16 + (Math.random() - 0.5) * 4;
-      
-      const particle = this.add.image(backX, backY, TEXTURES.particleWhite)
-        .setDepth(13)
-        .setAlpha(0.9)
-        .setScale(0.55 + Math.random() * 0.45);
-        
-      const driftAngle = angle + Math.PI + (Math.random() - 0.5) * 0.35;
-      const dist = 16 + Math.random() * 20;
-      
-      this.tweens.add({
-        targets: particle,
-        x: backX + Math.cos(driftAngle) * dist,
-        y: backY + Math.sin(driftAngle) * dist,
-        scale: 1.4 + Math.random() * 0.6,
-        alpha: 0,
-        duration: 320 + Math.random() * 180,
-        ease: "Quad.easeOut",
-        onComplete: () => {
-          particle.destroy();
-        }
-      });
+      this.spawnPlayerTrailLine(player.x, player.y, player.vx, player.vy, speed);
     }
 
     this.syncEnemies();
     this.syncPickups();
+    this.syncBombs();
     this.syncBoss();
+  }
+
+  private spawnPlayerTrailLine(x: number, y: number, vx: number, vy: number, speed: number): void {
+    const trailDirX = -vx / speed;
+    const trailDirY = -vy / speed;
+    const sideX = -trailDirY;
+    const sideY = trailDirX;
+    const length = Phaser.Math.Clamp(speed * 0.035, 18, 42);
+    const sideOffset = (Math.random() - 0.5) * 3;
+    const noseX = x + trailDirX * 15 + sideX * sideOffset;
+    const noseY = y + trailDirY * 15 + sideY * sideOffset;
+    const tailX = noseX + trailDirX * length;
+    const tailY = noseY + trailDirY * length;
+
+    const trail = this.add.graphics()
+      .setDepth(13)
+      .setAlpha(0.92)
+      .setBlendMode(Phaser.BlendModes.ADD);
+
+    trail.lineStyle(7, 0xe8c86a, 0.2);
+    trail.beginPath();
+    trail.moveTo(noseX, noseY);
+    trail.lineTo(tailX, tailY);
+    trail.strokePath();
+    trail.lineStyle(3, 0xfff5d7, 0.72);
+    trail.beginPath();
+    trail.moveTo(noseX, noseY);
+    trail.lineTo(tailX, tailY);
+    trail.strokePath();
+
+    this.tweens.add({
+      targets: trail,
+      alpha: 0,
+      duration: 170,
+      ease: "Cubic.easeOut",
+      onComplete: () => {
+        trail.destroy();
+      }
+    });
   }
 
   private syncEnemies(): void {
@@ -494,6 +552,44 @@ export class GameplayScene extends Phaser.Scene {
       if (!live.has(id)) {
         sprite.destroy();
         this.pickupSprites.delete(id);
+      }
+    }
+  }
+
+  private syncBombs(): void {
+    const live = new Set<string>();
+    for (const bomb of this.state.bombs) {
+      live.add(bomb.id);
+      let sprites = this.bombSprites.get(bomb.id);
+      if (!sprites) {
+        const glow = this.add.image(bomb.x, bomb.y, "fx.glow.radial")
+          .setDepth(10)
+          .setScale(0.8)
+          .setTint(bomb.color)
+          .setAlpha(0.58)
+          .setBlendMode(Phaser.BlendModes.ADD);
+        const core = this.add.image(bomb.x, bomb.y, TEXTURES.bombCore)
+          .setDepth(15)
+          .setBlendMode(Phaser.BlendModes.ADD);
+        sprites = { core, glow };
+        this.bombSprites.set(bomb.id, sprites);
+        this.minimap?.ignore(glow);
+        this.minimap?.ignore(core);
+      }
+
+      const pulse = 1 + Math.sin(bomb.age * 32) * 0.08;
+      sprites.core.setPosition(bomb.x, bomb.y);
+      sprites.core.setRotation(bomb.age * 7);
+      sprites.core.setScale(pulse);
+      sprites.glow.setPosition(bomb.x, bomb.y);
+      sprites.glow.setScale(0.72 + pulse * 0.18);
+    }
+
+    for (const [id, sprites] of this.bombSprites) {
+      if (!live.has(id)) {
+        sprites.core.destroy();
+        sprites.glow.destroy();
+        this.bombSprites.delete(id);
       }
     }
   }
@@ -547,7 +643,7 @@ export class GameplayScene extends Phaser.Scene {
       return;
     }
 
-    const color = beam.heat === "high" ? 0xfff1a0 : 0x46e6ff;
+    const color = beam.heat === "high" ? 0xd4845a : 0x5ab8a8;
     this.beamGraphics.lineStyle(8, color, 0.18);
     this.beamGraphics.lineBetween(beam.x1, beam.y1, beam.x2, beam.y2);
     this.beamGraphics.lineStyle(3, color, 0.95);
@@ -564,7 +660,7 @@ export class GameplayScene extends Phaser.Scene {
       }
 
       const active = enemy.state === "pulsing";
-      this.fieldGraphics.lineStyle(active ? 2 : 1, 0x46f4ff, active ? 0.48 : 0.18);
+      this.fieldGraphics.lineStyle(active ? 2 : 1, 0x6ec4b8, active ? 0.48 : 0.18);
       this.fieldGraphics.strokeCircle(enemy.x, enemy.y, active ? 70 : 44);
     }
   }
@@ -574,13 +670,15 @@ export class GameplayScene extends Phaser.Scene {
     for (const hazard of this.state.hazards) {
       if (hazard.kind === "lightning") {
         const charged = hazard.age >= hazard.damageAt;
-        this.hazardGraphics.lineStyle(charged ? 7 : 3, charged ? 0xe9fbff : 0x8b6dff, charged ? 0.92 : 0.32);
+        this.hazardGraphics.lineStyle(charged ? 7 : 3, charged ? 0xf0e4cc : 0x8a6db8, charged ? 0.88 : 0.28);
         this.hazardGraphics.lineBetween(hazard.x1, hazard.y1, hazard.x2, hazard.y2);
       } else {
         const progress = hazard.age / hazard.duration;
-        this.hazardGraphics.lineStyle(3, 0xffc247, 1 - progress);
+        const color = hazard.kind === "swarmExplosion" ? 0xe8c86a : 0xd4845a;
+        const alpha = hazard.kind === "swarmExplosion" ? 0.22 : 0.14;
+        this.hazardGraphics.lineStyle(hazard.kind === "swarmExplosion" ? 5 : 3, color, 1 - progress);
         this.hazardGraphics.strokeCircle(hazard.x1, hazard.y1, hazard.radius * progress);
-        this.hazardGraphics.fillStyle(0xffc247, 0.14 * (1 - progress));
+        this.hazardGraphics.fillStyle(color, alpha * (1 - progress));
         this.hazardGraphics.fillCircle(hazard.x1, hazard.y1, hazard.radius * progress);
       }
     }
@@ -632,21 +730,36 @@ export class GameplayScene extends Phaser.Scene {
         this.cameras.main.shake(80, 0.003);
       }
 
+      if (event.type === "player-dash") {
+        this.spawnGlowPulse(event.x, event.y, event.color, 1.5, 170);
+      }
+
+      if (event.type === "swarm-bomb-fired") {
+        this.spawnBurst(event.x, event.y, event.color, 8, 92);
+        this.spawnGlowPulse(event.x, event.y, event.color, 1.1, 150);
+      }
+
+      if (event.type === "swarm-bomb-exploded") {
+        this.spawnBurst(event.x, event.y, event.color, 18, 190);
+        this.spawnGlowPulse(event.x, event.y, event.color, 1.9, 260);
+        this.cameras.main.shake(76, 0.0035);
+      }
+
       if (event.type === "boss-breakout") {
-        this.cameras.main.flash(220, 92, 58, 150, false);
+        this.cameras.main.flash(220, 140, 90, 60, false);
         this.cameras.main.shake(430, 0.01);
       }
 
       if (event.type === "boss-defeated") {
         this.spawnBurst(event.x, event.y, event.color, 44, 360);
-        this.cameras.main.flash(320, 240, 210, 255, false);
+        this.cameras.main.flash(320, 232, 216, 180, false);
         this.cameras.main.shake(620, 0.014);
       }
     }
   }
 
   private spawnBurst(x: number, y: number, color: number, count: number, speed: number): void {
-    const texture = color === 0xffc247 ? TEXTURES.particleAmber : color === 0xf05dff ? TEXTURES.particleMagenta : color === 0x41e6e2 ? TEXTURES.particleCyan : TEXTURES.particleWhite;
+    const texture = color === 0xd4845a ? TEXTURES.particleAmber : color === 0xc47a8a ? TEXTURES.particleMagenta : color === 0x5ab8a8 ? TEXTURES.particleCyan : TEXTURES.particleWhite;
 
     for (let index = 0; index < count; index += 1) {
       const angle = (index / count) * Math.PI * 2 + Math.random() * 0.45;
@@ -664,5 +777,24 @@ export class GameplayScene extends Phaser.Scene {
         onComplete: () => particle.destroy()
       });
     }
+  }
+
+  private spawnGlowPulse(x: number, y: number, color: number, scale: number, duration: number): void {
+    const glow = this.add.image(x, y, "fx.glow.radial")
+      .setDepth(29)
+      .setTint(color)
+      .setScale(scale)
+      .setAlpha(0.64)
+      .setBlendMode(Phaser.BlendModes.ADD);
+
+    this.minimap?.ignore(glow);
+    this.tweens.add({
+      targets: glow,
+      scale: scale * 2.8,
+      alpha: 0,
+      duration,
+      ease: "Quad.easeOut",
+      onComplete: () => glow.destroy()
+    });
   }
 }

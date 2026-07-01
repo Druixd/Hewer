@@ -1,16 +1,16 @@
 :root {
   color-scheme: dark;
-  --bg: #000000;
-  --panel: rgba(0, 0, 0, 0.18);
-  --panel-solid: #090909;
-  --line: rgba(255, 218, 122, 0.28);
-  --text: #fff3c4;
-  --muted: #a88f5c;
-  --cyan: #41e6e2;
-  --violet: #8b6dff;
-  --amber: #ffc247;
-  --pink: #f05dff;
-  --red: #ff554c;
+  --bg: #060708;
+  --panel: rgba(12, 10, 8, 0.22);
+  --panel-solid: #0c0a08;
+  --line: rgba(212, 132, 90, 0.32);
+  --text: #e8d8b4;
+  --muted: #8a7a5c;
+  --cyan: #5ab8a8;
+  --violet: #8a6db8;
+  --amber: #d4845a;
+  --pink: #c47a8a;
+  --red: #c45a4a;
 }
 
 * {
@@ -61,7 +61,7 @@ canvas {
   display: grid;
   gap: 5px;
   width: min(300px, calc(100vw - 32px));
-  filter: drop-shadow(0 0 7px rgba(255, 194, 71, 0.35));
+  filter: drop-shadow(0 0 7px rgba(212, 132, 90, 0.3));
 }
 
 .hud-boss {
@@ -74,7 +74,37 @@ canvas {
   gap: 8px;
   width: min(430px, calc(100vw - 28px));
   transform: translateX(-50%);
-  filter: drop-shadow(0 0 9px rgba(143, 120, 255, 0.4));
+  filter: drop-shadow(0 0 9px rgba(138, 109, 184, 0.35));
+}
+
+.hud-task {
+  position: absolute;
+  left: 22px;
+  top: 18px;
+  width: min(360px, calc(100vw - 44px));
+  padding: 9px 10px;
+  border: 1px solid rgba(212, 132, 90, 0.34);
+  background: rgba(8, 7, 6, 0.78);
+}
+
+.task-name {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.task-meta,
+.task-progress {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.task-progress {
+  color: #d9c497;
 }
 
 .meter-row {
@@ -91,7 +121,7 @@ canvas {
   font-size: 11px;
   font-weight: 700;
   text-align: right;
-  text-shadow: 0 0 7px rgba(255, 231, 155, 0.75);
+  text-shadow: 0 0 7px rgba(232, 216, 180, 0.65);
 }
 
 .meter {
@@ -102,39 +132,39 @@ canvas {
 }
 
 .meter.hull {
-  border-color: rgba(255, 85, 76, 0.55);
+  border-color: rgba(196, 90, 74, 0.55);
 }
 
 .meter.heat {
-  border-color: rgba(65, 230, 226, 0.55);
+  border-color: rgba(90, 184, 168, 0.55);
 }
 
 .meter.boss {
-  border-color: rgba(143, 120, 255, 0.65);
+  border-color: rgba(138, 109, 184, 0.6);
 }
 
 .meter i {
   display: block;
   width: 100%;
   height: 100%;
-  background: repeating-linear-gradient(90deg, #fff7d0 0px, #fff7d0 6px, transparent 6px, transparent 8px);
-  box-shadow: 0 0 10px rgba(255, 242, 174, 0.7);
+  background: repeating-linear-gradient(90deg, #e8d0a0 0px, #e8d0a0 6px, transparent 6px, transparent 8px);
+  box-shadow: 0 0 10px rgba(232, 208, 160, 0.6);
   transition: width 0.1s ease-out;
 }
 
 .meter.hull i {
   background: repeating-linear-gradient(90deg, var(--red) 0px, var(--red) 6px, transparent 6px, transparent 8px);
-  box-shadow: 0 0 10px rgba(255, 85, 76, 0.8);
+  box-shadow: 0 0 10px rgba(196, 90, 74, 0.7);
 }
 
 .meter.heat i {
   background: repeating-linear-gradient(90deg, var(--cyan) 0px, var(--cyan) 6px, transparent 6px, transparent 8px);
-  box-shadow: 0 0 10px rgba(65, 230, 226, 0.8);
+  box-shadow: 0 0 10px rgba(90, 184, 168, 0.7);
 }
 
 .meter.boss i {
   background: repeating-linear-gradient(90deg, var(--violet) 0px, var(--violet) 6px, transparent 6px, transparent 8px);
-  box-shadow: 0 0 12px rgba(143, 120, 255, 0.82);
+  box-shadow: 0 0 12px rgba(138, 109, 184, 0.72);
 }
 
 .ore-row {
@@ -170,7 +200,7 @@ canvas {
   padding: 4px;
   border: 1.5px solid rgba(255, 255, 255, 0.35);
   color: var(--text);
-  background: rgba(8, 6, 12, 0.82);
+  background: rgba(12, 10, 8, 0.82);
   font-size: 9px;
   font-weight: 800;
   border-radius: 2px;
@@ -191,11 +221,11 @@ canvas {
   letter-spacing: 0.5px;
 }
 
-.slot:nth-child(1) { border-color: rgba(255, 194, 71, 0.55); }
-.slot:nth-child(2) { border-color: rgba(139, 109, 255, 0.55); }
-.slot:nth-child(3) { border-color: rgba(65, 230, 226, 0.55); }
-.slot:nth-child(4) { border-color: rgba(240, 93, 255, 0.55); }
-.slot:nth-child(5) { border-color: rgba(255, 85, 76, 0.55); }
+.slot:nth-child(1) { border-color: rgba(212, 132, 90, 0.5); }
+.slot:nth-child(2) { border-color: rgba(138, 109, 184, 0.5); }
+.slot:nth-child(3) { border-color: rgba(90, 184, 168, 0.5); }
+.slot:nth-child(4) { border-color: rgba(196, 122, 138, 0.5); }
+.slot:nth-child(5) { border-color: rgba(196, 90, 74, 0.5); }
 
 .hud-center {
   position: absolute;
@@ -213,8 +243,8 @@ canvas {
 .hud-score {
   font-size: 28px;
   font-weight: 900;
-  color: #ffd24c;
-  text-shadow: 0 0 10px rgba(255, 210, 76, 0.85);
+  color: #e8c86a;
+  text-shadow: 0 0 10px rgba(232, 200, 106, 0.75);
   letter-spacing: 2px;
   line-height: 1;
   font-family: 'Bahnschrift', monospace;
@@ -255,8 +285,8 @@ canvas {
   width: 100%;
   height: 100%;
   border-radius: 50%;
-  border: 2px solid rgba(240, 93, 255, 0.55); /* var(--pink) */
-  box-shadow: 0 0 12px rgba(240, 93, 255, 0.3), inset 0 0 16px rgba(240, 93, 255, 0.2);
+  border: 2px solid rgba(212, 132, 90, 0.45);
+  box-shadow: 0 0 12px rgba(212, 132, 90, 0.25), inset 0 0 16px rgba(212, 132, 90, 0.15);
   overflow: hidden;
   position: relative;
   background: transparent;
@@ -266,8 +296,8 @@ canvas {
   position: absolute;
   inset: 0;
   background: 
-    repeating-linear-gradient(rgba(240, 93, 255, 0.12) 0px, rgba(240, 93, 255, 0.12) 1px, transparent 1px, transparent 3px),
-    linear-gradient(90deg, rgba(240, 93, 255, 0.05) 1px, transparent 1px);
+    repeating-linear-gradient(rgba(212, 132, 90, 0.08) 0px, rgba(212, 132, 90, 0.08) 1px, transparent 1px, transparent 3px),
+    linear-gradient(90deg, rgba(212, 132, 90, 0.04) 1px, transparent 1px);
   background-size: 100% 3px, 12px 100%;
   border-radius: 50%;
 }
@@ -276,8 +306,8 @@ canvas {
   position: absolute;
   inset: 0;
   border-radius: 50%;
-  background: conic-gradient(from 0deg, rgba(240, 93, 255, 0.18) 0deg, rgba(240, 93, 255, 0.03) 120deg, transparent 240deg);
-  animation: radar-sweep 2.8s linear infinite;
+  background: conic-gradient(from 0deg, rgba(212, 132, 90, 0.14) 0deg, rgba(212, 132, 90, 0.02) 120deg, transparent 240deg);
+  animation: radar-sweep 3.2s linear infinite;
 }
 
 @keyframes radar-sweep {
@@ -293,7 +323,7 @@ canvas {
   width: 28px;
   height: 28px;
   place-items: center;
-  border: 1px solid rgba(255, 218, 122, 0.46);
+  border: 1px solid rgba(212, 132, 90, 0.42);
   background: rgba(0, 0, 0, 0.74);
   color: var(--text);
   font-size: 12px;
@@ -304,13 +334,16 @@ canvas {
 .run-panel {
   pointer-events: auto;
   position: absolute;
+  z-index: 5;
   left: 50%;
   top: 50%;
   width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
   padding: 16px;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: rgba(6, 7, 11, 0.94);
+  background: rgba(10, 9, 7, 0.94);
   transform: translate(-50%, -50%);
 }
 
@@ -328,16 +361,36 @@ canvas {
 
 .run-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.summary-task {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 12px;
+  padding: 9px 10px;
+  border: 1px solid rgba(212, 132, 90, 0.26);
+  background: #0a0908;
+}
+
+.summary-task b {
+  color: var(--text);
+  font-size: 14px;
+}
+
+.summary-task span {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .run-grid div {
   min-width: 0;
   padding: 8px;
   border: 1px solid var(--line);
-  background: #080a0f;
+  background: #0a0908;
 }
 
 .run-grid span {
@@ -370,7 +423,7 @@ button {
   min-height: 34px;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 6px;
-  background: #11151d;
+  background: #14120e;
   color: var(--text);
   font: inherit;
   font-size: 13px;
@@ -378,7 +431,7 @@ button {
 }
 
 button:hover {
-  border-color: rgba(65, 230, 226, 0.58);
+  border-color: rgba(212, 132, 90, 0.5);
 }
 
 button:disabled {
@@ -398,7 +451,13 @@ button:disabled {
   }
 
   .hud-boss {
+    top: 92px;
+  }
+
+  .hud-task {
+    left: 10px;
     top: 10px;
+    width: min(300px, calc(100vw - 20px));
   }
 
   .run-grid {

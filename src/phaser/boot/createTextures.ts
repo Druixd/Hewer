@@ -26,126 +26,139 @@ function createTileTextures(scene: Phaser.Scene): void {
 
     if (block !== "empty") {
       if (block === "basalt") {
-        // Dark basalt wireframe block
-        graphics.fillStyle(0x0b0713, 0.95);
+        // Dark basalt with horizontal strata layers
+        graphics.fillStyle(0x0c0a07, 0.95);
         graphics.fillRect(0, 0, 24, 24);
 
-        // Diagonal hatching lines (creates continuous diagonal scanline view on minimap)
-        graphics.lineStyle(1, 0x1d1433, 0.7);
-        for (let offset = -24; offset < 24; offset += 4) {
-          graphics.lineBetween(offset, 0.5, offset + 24, 23.5);
+        // Horizontal sediment strata lines
+        graphics.lineStyle(1, 0x1a1610, 0.6);
+        for (let row = 3; row < 24; row += 5) {
+          graphics.lineBetween(0.5, row + ((row * 7) % 3) * 0.5, 23.5, row);
         }
         
-        // Double outline
-        graphics.lineStyle(1, 0x221735, 0.8);
+        // Subtle outer border
+        graphics.lineStyle(1, 0x1e1a12, 0.7);
         graphics.strokeRect(0.5, 0.5, 23, 23);
-        graphics.lineStyle(1, config.glow, 0.65);
+        graphics.lineStyle(1, config.glow, 0.5);
         graphics.strokeRect(3.5, 3.5, 17, 17);
         
-        // Diagonals connecting corners
-        graphics.lineStyle(1, config.glow, 0.45);
-        graphics.lineBetween(0.5, 0.5, 3.5, 3.5);
-        graphics.lineBetween(23.5, 0.5, 20.5, 3.5);
-        graphics.lineBetween(0.5, 23.5, 3.5, 20.5);
-        graphics.lineBetween(23.5, 23.5, 20.5, 20.5);
-        
-        // Subtle inner dot
-        graphics.fillStyle(config.glow, 0.55);
-        graphics.fillRect(11, 11, 2, 2);
+        // Small grain dots scattered
+        graphics.fillStyle(config.glow, 0.4);
+        graphics.fillRect(6, 5, 1, 1);
+        graphics.fillRect(17, 9, 1, 1);
+        graphics.fillRect(10, 17, 1, 1);
+        graphics.fillRect(19, 19, 1, 1);
+        graphics.fillRect(4, 14, 1, 1);
       } else if (block === "ferrite") {
-        // Metallic plate with corner bolts
-        graphics.fillStyle(0x111417, 0.95);
+        // Layered mineral bands with metallic flecks
+        graphics.fillStyle(0x12100a, 0.95);
         graphics.fillRect(0, 0, 24, 24);
         
-        graphics.lineStyle(1, 0x5c6770, 0.7);
+        // Horizontal mineral bands
+        graphics.fillStyle(config.glow, 0.18);
+        graphics.fillRect(0, 4, 24, 3);
+        graphics.fillRect(0, 13, 24, 4);
+        
+        graphics.lineStyle(1, 0x7a6842, 0.6);
         graphics.strokeRect(1.5, 1.5, 21, 21);
-        graphics.lineStyle(1, config.glow, 0.85);
+        graphics.lineStyle(1, config.glow, 0.7);
         graphics.strokeRect(4.5, 4.5, 15, 15);
         
-        // Corner bolts
-        graphics.fillStyle(0xd7e0e2, 0.9);
-        graphics.fillRect(2.5, 2.5, 2, 2);
-        graphics.fillRect(19.5, 2.5, 2, 2);
-        graphics.fillRect(2.5, 19.5, 2, 2);
-        graphics.fillRect(19.5, 19.5, 2, 2);
+        // Metallic fleck dots
+        graphics.fillStyle(0xd4c090, 0.8);
+        graphics.fillRect(3, 5, 1.5, 1.5);
+        graphics.fillRect(14, 5, 1.5, 1.5);
+        graphics.fillRect(8, 14, 1.5, 1.5);
+        graphics.fillRect(18, 15, 1.5, 1.5);
         
-        // Center metal structural square
-        graphics.fillStyle(0x5c6770, 0.4);
-        graphics.fillRect(8.5, 8.5, 7, 7);
+        // Center mineral grain
+        graphics.fillStyle(config.glow, 0.35);
+        graphics.fillRect(9, 9, 6, 5);
       } else if (block === "shimmer") {
-        // Purple block with nested glowing rounded circles
-        graphics.fillStyle(0x0e091f, 0.95);
+        // Crystal facet pattern
+        graphics.fillStyle(0x0e0a18, 0.95);
         graphics.fillRect(0, 0, 24, 24);
         
-        graphics.lineStyle(1, 0x8f78ff, 0.95);
+        graphics.lineStyle(1, 0x7a5da0, 0.85);
         graphics.strokeRect(1.5, 1.5, 21, 21);
         
-        // Concentric rings
-        graphics.strokeCircle(12, 12, 8);
-        graphics.lineStyle(1, 0x8f78ff, 0.6);
-        graphics.strokeCircle(12, 12, 4);
+        // Crystal facet lines (angular cuts)
+        graphics.lineStyle(1, config.glow, 0.7);
+        graphics.lineBetween(4, 2, 20, 12);
+        graphics.lineBetween(20, 12, 12, 22);
+        graphics.lineBetween(12, 22, 4, 2);
         
-        graphics.fillStyle(0x8f78ff, 0.8);
-        graphics.fillCircle(12, 12, 2);
+        // Inner gleam highlight
+        graphics.fillStyle(config.glow, 0.55);
+        graphics.fillTriangle(10, 8, 16, 12, 12, 18);
+        
+        // Bright facet point
+        graphics.fillStyle(0xe8d8b4, 0.7);
+        graphics.fillCircle(12, 12, 1.5);
       } else if (block === "voltaic") {
-        // Cyan/yellow with cracked crystal structures
-        graphics.fillStyle(0x051a1e, 0.95);
+        // Branching mineral vein pattern
+        graphics.fillStyle(0x081614, 0.95);
         graphics.fillRect(0, 0, 24, 24);
         
-        graphics.lineStyle(1.5, 0x41e6e2, 1.0);
+        graphics.lineStyle(1.2, 0x4a9a8a, 0.9);
         graphics.strokeRect(1.5, 1.5, 21, 21);
         
-        // Fracture lines
+        // Branching vein lines (like real mineral veins)
+        graphics.lineStyle(1.5, config.glow, 0.8);
         graphics.beginPath();
-        graphics.moveTo(1.5, 7);
-        graphics.lineTo(10, 11);
-        graphics.lineTo(22.5, 5);
-        graphics.moveTo(10, 11);
-        graphics.lineTo(13, 22.5);
-        graphics.moveTo(10, 11);
-        graphics.lineTo(1.5, 17);
+        graphics.moveTo(2, 10);
+        graphics.lineTo(8, 12);
+        graphics.lineTo(14, 8);
+        graphics.lineTo(22, 11);
+        graphics.moveTo(8, 12);
+        graphics.lineTo(10, 20);
+        graphics.moveTo(14, 8);
+        graphics.lineTo(16, 2);
         graphics.strokePath();
         
-        // Glowing center shard
-        graphics.fillStyle(0x41e6e2, 0.7);
-        graphics.fillRect(9, 10, 4, 3);
+        // Soft center vein node
+        graphics.fillStyle(config.glow, 0.5);
+        graphics.fillCircle(11, 12, 2.5);
       } else if (block === "aetherium") {
-        // Magenta bubbly block
-        graphics.fillStyle(0x190b20, 0.95);
+        // Fossil-like spiral organic pattern
+        graphics.fillStyle(0x180e12, 0.95);
         graphics.fillRect(0, 0, 24, 24);
         
-        graphics.lineStyle(1, 0xf05dff, 0.95);
+        graphics.lineStyle(1, 0xa06878, 0.85);
         graphics.strokeRect(1.5, 1.5, 21, 21);
         
-        // Bubble textures inside
-        graphics.fillStyle(0xf05dff, 0.35);
+        // Fossil spiral marks
+        graphics.lineStyle(1.2, config.glow, 0.7);
+        graphics.beginPath();
+        graphics.arc(12, 12, 7, 0, Math.PI * 1.5, false);
+        graphics.strokePath();
+        graphics.beginPath();
+        graphics.arc(12, 12, 4, Math.PI * 0.5, Math.PI * 2, false);
+        graphics.strokePath();
         
-        graphics.strokeCircle(7, 7, 4.5);
-        graphics.fillCircle(7, 7, 3.5);
-        
-        graphics.strokeCircle(16.5, 15.5, 5.5);
-        graphics.fillCircle(16.5, 15.5, 4.5);
-        
-        graphics.strokeCircle(9.5, 16.5, 3);
-        graphics.fillCircle(9.5, 16.5, 2);
-        
-        graphics.strokeCircle(17, 6, 3.5);
-        graphics.fillCircle(17, 6, 2.5);
+        // Organic ring dots
+        graphics.fillStyle(config.glow, 0.5);
+        graphics.fillCircle(12, 12, 2);
+        graphics.fillStyle(config.glow, 0.3);
+        graphics.fillCircle(7, 8, 1.5);
+        graphics.fillCircle(16, 16, 1.5);
       } else if (block === "ancient") {
-        // Ancient bricks / runic design
-        graphics.fillStyle(0x050408, 0.95);
+        // Worn carved symbols, weathered edges
+        graphics.fillStyle(0x060504, 0.95);
         graphics.fillRect(0, 0, 24, 24);
         
-        graphics.lineStyle(1, 0x292142, 0.8);
+        graphics.lineStyle(1, 0x221e16, 0.7);
         graphics.strokeRect(0.5, 0.5, 23, 23);
         
-        graphics.lineStyle(1.5, 0x5a4890, 0.75);
+        graphics.lineStyle(1.2, 0x3a3222, 0.6);
         graphics.strokeRect(4.5, 4.5, 15, 15);
         
-        // Cross layout
-        graphics.lineStyle(1, 0x292142, 0.6);
-        graphics.lineBetween(12, 0.5, 12, 23.5);
-        graphics.lineBetween(0.5, 12, 23.5, 12);
+        // Worn carved marks
+        graphics.lineStyle(1, config.glow, 0.45);
+        graphics.lineBetween(8, 8, 16, 16);
+        graphics.lineBetween(16, 8, 8, 16);
+        graphics.fillStyle(config.glow, 0.3);
+        graphics.fillCircle(12, 12, 2);
       }
     }
 
@@ -193,7 +206,7 @@ function createEnemyTextures(scene: Phaser.Scene): void {
       // Red/orange spiky gear-like hazard wheel with dark center
       graphics.fillStyle(0x000000, 0.85);
       graphics.fillCircle(24, 24, 12);
-      graphics.lineStyle(2, 0xff2b2b, 1.0);
+      graphics.lineStyle(2, 0xc45a4a, 0.95);
       graphics.strokeCircle(24, 24, 12);
       
       const numSpikes = 12;
@@ -212,13 +225,13 @@ function createEnemyTextures(scene: Phaser.Scene): void {
       }
       graphics.strokePath();
       
-      graphics.fillStyle(0xffb22b, 1.0);
+      graphics.fillStyle(0xd4845a, 0.95);
       graphics.fillCircle(24, 24, 5);
       graphics.fillStyle(0xffffff, 0.95);
       graphics.fillCircle(23, 23, 1.5);
     } else if (enemy === "prismStalker") {
       // Sleek prism diamond design
-      graphics.fillStyle(0x1a0518, 0.85);
+      graphics.fillStyle(0x180e12, 0.85);
       graphics.beginPath();
       graphics.moveTo(24, 6);
       graphics.lineTo(43, 24);
@@ -230,7 +243,7 @@ function createEnemyTextures(scene: Phaser.Scene): void {
       graphics.lineStyle(2, color, 1.0);
       graphics.strokePath();
       
-      graphics.lineStyle(1, 0xffffff, 0.65);
+      graphics.lineStyle(1, 0xe8d8b4, 0.6);
       graphics.beginPath();
       graphics.moveTo(24, 12);
       graphics.lineTo(37, 24);
@@ -243,14 +256,14 @@ function createEnemyTextures(scene: Phaser.Scene): void {
       graphics.fillCircle(24, 24, 4);
     } else {
       // Arc Warden cyan area controller
-      graphics.fillStyle(0x051a24, 0.85);
+      graphics.fillStyle(0x0a1614, 0.85);
       graphics.fillCircle(24, 24, 18);
       graphics.lineStyle(2.5, color, 1.0);
       graphics.strokeCircle(24, 24, 16);
-      graphics.lineStyle(1.5, 0xffffff, 0.85);
+      graphics.lineStyle(1.5, 0xe8d8b4, 0.8);
       graphics.strokeRect(14, 14, 20, 20);
       
-      graphics.fillStyle(0xffffff, 0.95);
+      graphics.fillStyle(0xe8d8b4, 0.9);
       graphics.fillCircle(24, 24, 4);
     }
 
@@ -264,7 +277,7 @@ function createShipTexture(scene: Phaser.Scene): void {
     const graphics = scene.make.graphics({ x: 0, y: 0 }, false);
     
     // Sleek wing shapes (white)
-    graphics.fillStyle(0xffffff, 0.95);
+    graphics.fillStyle(0xe8d8b4, 0.92);
     graphics.beginPath();
     graphics.moveTo(5, 8);
     graphics.lineTo(25, 22);
@@ -274,7 +287,7 @@ function createShipTexture(scene: Phaser.Scene): void {
     graphics.fillPath();
     
     // Sleek cockpit / hull (golden yellow)
-    graphics.fillStyle(0xf8d54a, 1.0);
+    graphics.fillStyle(0xd4845a, 1.0);
     graphics.beginPath();
     graphics.moveTo(13, 22);
     graphics.lineTo(25, 14);
@@ -284,13 +297,13 @@ function createShipTexture(scene: Phaser.Scene): void {
     graphics.fillPath();
     
     // Energy engine lines
-    graphics.lineStyle(1.5, 0xffc247, 0.9);
+    graphics.lineStyle(1.5, 0xc4a86e, 0.9);
     graphics.lineBetween(13, 22, 48, 22);
     
     // Cockpit glass (white/cyan glow)
-    graphics.fillStyle(0xffffff, 0.95);
+    graphics.fillStyle(0xe8d8b4, 0.92);
     graphics.fillCircle(30, 22, 4.5);
-    graphics.fillStyle(0x41e6e2, 0.8);
+    graphics.fillStyle(0x5ab8a8, 0.75);
     graphics.fillCircle(31, 22, 2.5);
     
     graphics.generateTexture(TEXTURES.ship, 56, 44);
@@ -299,7 +312,7 @@ function createShipTexture(scene: Phaser.Scene): void {
 
   if (!scene.textures.exists(TEXTURES.reticle)) {
     const graphics = scene.make.graphics({ x: 0, y: 0 }, false);
-    graphics.lineStyle(1.5, 0xffffff, 0.85);
+    graphics.lineStyle(1.5, 0xe8d8b4, 0.8);
     graphics.strokeCircle(10, 10, 6.5);
     graphics.lineBetween(10, 0, 10, 4);
     graphics.lineBetween(10, 16, 10, 20);
@@ -315,26 +328,26 @@ function createBossTextures(scene: Phaser.Scene): void {
     const graphics = scene.make.graphics({ x: 0, y: 0 }, false);
     
     // Bulbous orange head
-    graphics.fillStyle(0x231337, 0.95);
+    graphics.fillStyle(0x1a1210, 0.95);
     graphics.fillCircle(36, 36, 32);
     
-    graphics.lineStyle(3.5, 0xff9f43, 1.0);
+    graphics.lineStyle(3.5, 0xd4845a, 1.0);
     graphics.strokeCircle(36, 36, 29);
     
     // Concentric inner red-orange ring
-    graphics.lineStyle(2, 0xff4c38, 0.9);
+    graphics.lineStyle(2, 0xc45a4a, 0.85);
     graphics.strokeCircle(36, 36, 18);
     
     // Glowing cyan eyes
-    graphics.fillStyle(0x41e6e2, 1.0);
+    graphics.fillStyle(0x5ab8a8, 1.0);
     graphics.fillCircle(25, 25, 5.5);
     graphics.fillCircle(47, 25, 5.5);
-    graphics.fillStyle(0xffffff, 0.95);
+    graphics.fillStyle(0xe8d8b4, 0.9);
     graphics.fillCircle(24, 24, 2);
     graphics.fillCircle(46, 24, 2);
     
     // Feelers/spiky head structures
-    graphics.lineStyle(2.5, 0xff9f43, 0.95);
+    graphics.lineStyle(2.5, 0xd4845a, 0.9);
     graphics.lineBetween(36, 4, 36, -8);
     graphics.lineBetween(12, 12, 0, 0);
     graphics.lineBetween(60, 12, 72, 0);
@@ -347,18 +360,18 @@ function createBossTextures(scene: Phaser.Scene): void {
     const graphics = scene.make.graphics({ x: 0, y: 0 }, false);
     
     // Dark segment body
-    graphics.fillStyle(0x190c29, 0.95);
+    graphics.fillStyle(0x140e0a, 0.95);
     graphics.fillCircle(28, 28, 25);
     
     // Orange segmented border
-    graphics.lineStyle(3, 0xff9f43, 1.0);
+    graphics.lineStyle(3, 0xd4845a, 1.0);
     graphics.strokeCircle(28, 28, 22);
     
-    graphics.lineStyle(1.5, 0x8b6dff, 0.85);
+    graphics.lineStyle(1.5, 0x8a6db8, 0.8);
     graphics.strokeCircle(28, 28, 12);
     
     // Side circle legs/tentacles
-    graphics.fillStyle(0xff9f43, 1.0);
+    graphics.fillStyle(0xd4845a, 1.0);
     for (let i = 0; i < 8; i++) {
       const angle = (i / 8) * Math.PI * 2;
       graphics.fillCircle(28 + Math.cos(angle) * 23.5, 28 + Math.sin(angle) * 23.5, 3.5);
@@ -371,9 +384,10 @@ function createBossTextures(scene: Phaser.Scene): void {
 
 function createFxTextures(scene: Phaser.Scene): void {
   createParticle(scene, TEXTURES.particleWhite, 0xffffff);
-  createParticle(scene, TEXTURES.particleCyan, 0x41e6e2);
-  createParticle(scene, TEXTURES.particleAmber, 0xffc247);
-  createParticle(scene, TEXTURES.particleMagenta, 0xf05dff);
+  createParticle(scene, TEXTURES.particleCyan, 0x5ab8a8);
+  createParticle(scene, TEXTURES.particleAmber, 0xd4845a);
+  createParticle(scene, TEXTURES.particleMagenta, 0xc47a8a);
+  createBombCoreTexture(scene);
   createRadialGlowTexture(scene);
 }
 
@@ -387,10 +401,28 @@ function createParticle(scene: Phaser.Scene, key: string, color: number): void {
   // Smooth circular particles matching references (flat, crisp circle look)
   graphics.fillStyle(color, 1.0);
   graphics.fillCircle(8, 8, 6.5);
-  graphics.lineStyle(1.5, 0xffffff, 0.7);
+  graphics.lineStyle(1.5, 0xe8d8b4, 0.65);
   graphics.strokeCircle(8, 8, 7.5);
   
   graphics.generateTexture(key, 16, 16);
+  graphics.destroy();
+}
+
+function createBombCoreTexture(scene: Phaser.Scene): void {
+  if (scene.textures.exists(TEXTURES.bombCore)) {
+    return;
+  }
+
+  const graphics = scene.make.graphics({ x: 0, y: 0 }, false);
+  graphics.fillStyle(0x2a1208, 0.9);
+  graphics.fillCircle(12, 12, 10);
+  graphics.fillStyle(0xd4845a, 1);
+  graphics.fillCircle(12, 12, 6.5);
+  graphics.fillStyle(0xe8d8b4, 0.95);
+  graphics.fillCircle(10, 10, 2.5);
+  graphics.lineStyle(2, 0xc4a86e, 0.95);
+  graphics.strokeCircle(12, 12, 9);
+  graphics.generateTexture(TEXTURES.bombCore, 24, 24);
   graphics.destroy();
 }
 
@@ -405,10 +437,10 @@ function createRadialGlowTexture(scene: Phaser.Scene): void {
   if (canvas) {
     const ctx = canvas.getContext();
     const grad = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-    grad.addColorStop(0, "rgba(255, 255, 255, 1)");
-    grad.addColorStop(0.3, "rgba(255, 255, 255, 0.5)");
-    grad.addColorStop(0.7, "rgba(255, 255, 255, 0.12)");
-    grad.addColorStop(1, "rgba(255, 255, 255, 0)");
+    grad.addColorStop(0, "rgba(232, 200, 160, 1)");
+    grad.addColorStop(0.3, "rgba(232, 200, 160, 0.45)");
+    grad.addColorStop(0.7, "rgba(232, 200, 160, 0.1)");
+    grad.addColorStop(1, "rgba(232, 200, 160, 0)");
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, size, size);
     canvas.refresh();

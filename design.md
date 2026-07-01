@@ -4,9 +4,9 @@ Author: Nitish
 
 ## Core Identity
 
-HEWER is a casual sci-fi voxel mining side-scroller set inside the glowing caverns of Merope. The player pilots a compact mining ship through dark, bioluminescent caves, breaking mineral blocks, auto-collecting resources, fighting territorial lifeforms, and managing escalating pressure until a boss breaks out.
+HEWER is a casual sci-fi voxel mining side-scroller set inside the glowing caverns of Merope. The player pilots a compact mining ship through dark, bioluminescent caves, breaking mineral blocks, auto-collecting resources, fighting territorial lifeforms, and completing organization-issued resource and crafting contracts across territories.
 
-The intended feel is casual, juicy, glowy, and readable: flow-state mining interrupted by panic combat. Visuals should stay close to the supplied references: mostly black negative space, chunky square tiles, neon ore clusters, compact HUD chrome, bright particles, subtle shake, and clear silhouettes.
+The intended feel is casual, juicy, glowy, and readable: flow-state mining interrupted by panic combat. Visuals follow an analog retro space explorer style with space vibes: deep space indigo backdrop, warm star dust, organic geology tile patterns (sediment strata, crystal facets, mineral veins), warm candlelight radial halos instead of neon bloom, and an analog instrument panel HUD with warm cream and copper tones.
 
 ## World
 
@@ -15,7 +15,17 @@ Merope is a hollowed-out planet once mined by the Excavants. The launch design i
 - The Shimmer Veins: crystal/electric caverns ruled by Voltrix.
 - The Cinder Hollows: magma/ash caverns ruled by Pyroclast.
 
-The first playable slice implements The Shimmer Veins only. Cinder Hollows remains documented future scope.
+The first playable slice implemented The Shimmer Veins only. Post-v0 progression may use an early Cinder Hollows profile for territory variety while full Cinder art, enemies, and Pyroclast remain later scope.
+
+## Progression Direction
+
+HEWER is now past the v0 slice. The main goal is no longer "beat Voltrix." The organization gives the player an active order tied to a territory. Orders ask the player to collect specific mineral amounts and craft named objective items from authored recipes. This gives each run a clear practical purpose even when the boss does not appear.
+
+Bosses are territory achievements. Defeating Voltrix awards the Voltrix Core achievement and bonus value, but it does not replace the active org order and does not automatically complete the run. The player still needs to extract or bank cargo through the normal loop.
+
+The first post-v0 progression pass uses automatic active orders instead of a full mission board. If the player has no active order, the game assigns the next incomplete order from unlocked territories. Completing key orders can unlock additional territories.
+
+Run generation uses the active order as context. Normal runs are seeded from territory, map variant, run serial, and task id so repeated "New Run" starts do not keep loading the same layout. "Same Seed" remains an explicit replay/debug action.
 
 ### Shimmer Veins Generation Rules
 
@@ -43,7 +53,8 @@ Core controls:
 - WASD / Arrow Keys: move relative to cursor direction. W/Up moves toward the cursor, S/Down reverses, and A/D or Left/Right strafe.
 - Mouse: aim and define forward direction.
 - Left Click: fire mining laser / weapon.
-- Right Click: secondary ability.
+- Right Click: throw a burst-cluster swarm bomb toward the cursor. Mini bombs explode on enemy, boss, or wall contact.
+- Shift: dash toward the cursor with a long emergency burst.
 - Space: toggle laser intensity.
 
 ## Mining And Collection
@@ -71,6 +82,8 @@ Shimmer enemies for launch design:
 
 Threat builds from mining ore, rare drops, enemy kills, and time spent in a zone. At max threat, Voltrix breaks out and hunts the player. Full Voltrix has burrow/lightning phases; the v0 implementation uses a simplified segmented chase boss with lightning bursts.
 
+The combat feel should lean slightly more bullet-hell-like than the first slice: enemies appear in denser, less predictable pockets, the player has a longer dash to cut through pressure, and right click provides a burst-cluster swarm bomb for clearing immediate threats. The swarm bomb should feel like warm emitted energy: bright cores, additive halos, fast sparks, and impact shake, not a translucent sprite fade.
+
 ## Base Loop
 
 Between runs, the player sees a compact run summary, sells collected minerals, and buys visible ship upgrades. The first slice keeps this as a DOM post-run screen with local save data:
@@ -85,14 +98,14 @@ Mission board, market saturation, ship bay cosmetics, and complex crafting are l
 
 ## Playable Slice v0
 
-The v0 target is a playable Shimmer Veins slice, not the full launch MVP.
+The v0 target was a playable Shimmer Veins slice, not the full launch MVP. Current work is post-v0 and starts adding the real progression frame around that slice.
 
 Included:
 
 - Phaser + TypeScript + Vite app.
 - Seeded Shimmer Veins cavern generation.
 - Procedural pixel/voxel sprites and generated texture manifest.
-- MK-I movement, mouse aim, mining laser, heat, overheat, and secondary dash.
+- MK-I movement, mouse aim, mining laser, heat, overheat, Shift dash, and right-click swarm bomb.
 - Destructible blocks with Ferrite, Shimmer Crystal, Voltaic Dust, and rare Aetherium drops.
 - Pickup magnetization and inventory HUD.
 - Arc Warden, Prism Stalker, and Spark Sac enemy prototypes.
@@ -100,16 +113,35 @@ Included:
 - Voltrix-lite segmented breakout encounter.
 - Run summary and localStorage upgrades.
 
-Out of scope for v0:
+Original v0 out of scope:
 
 - Cinder Hollows and Pyroclast.
 - MK-II and MK-III ship unlocks.
-- Mission board.
-- Complex crafting recipes.
+- Full mission board.
+- Complex/procedural crafting recipes.
 - Market saturation.
 - Cave-in simulation.
 - Imported or generated bitmap sprite sheets.
 - Production build or deployment.
+
+## Post-v0 Progression Slice
+
+Included now:
+
+- Auto-assigned org orders.
+- Persistent task progress.
+- Authored collect-and-craft recipes.
+- Territory-specific run context.
+- Shimmer Veins and an early Cinder Hollows territory profile.
+- Boss achievements separated from task completion.
+- Fresh run seeds based on territory, map variant, run serial, and task id.
+
+Still later scope:
+
+- Player-selected mission board.
+- Narrative contract chains.
+- Full Cinder Hollows art, enemies, and Pyroclast encounter.
+- Market saturation and advanced economy pressure.
 
 ## UX Direction
 
@@ -120,3 +152,7 @@ The main camera should keep the player centered with a slight delayed follow. It
 The minimap is a local navigation instrument, not a full level map. It should stay player-centered, show only nearby movable-area edges and in-range tactical markers, and avoid revealing the complete cave layout. Compass labels should not appear unless the game adds a real north/orientation system.
 
 The visual target is not a generic dashboard. The HUD should feel like functional mining ship instrumentation: compact bars, mineral counters, small state readouts, and restrained transitions. Strong motion is reserved for danger, impact, mineral collection, boss breakout, and rewards.
+
+The cave should not read as fully visible at all times. Keep the far environment dark, use local visibility around the player, and make important ores, enemies, bombs, and hazards read through additive emission-style glow. Avoid relying on sprite opacity as the primary lighting language.
+
+Player movement trails should read as clean velocity-aligned energy streaks, not smoke or expanding bubble particles. The trail should stay thin, readable, and attached to ship motion so it supports speed feedback without covering cave detail.

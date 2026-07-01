@@ -17,7 +17,7 @@ setHudController(hud);
 const game = new Phaser.Game({
   type: Phaser.AUTO,
   parent: gameRoot,
-  backgroundColor: "#020205",
+  backgroundColor: "#06080f",
   scale: {
     mode: Phaser.Scale.RESIZE,
     autoCenter: Phaser.Scale.CENTER_BOTH,

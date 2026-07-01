@@ -1,5 +1,5 @@
-import { BLOCK_CONFIG, ENEMY_CONFIG } from "../content/config";
-import { TILE_SIZE, type BlockId, type EnemyState, type TileState, type WorldState } from "./types";
+import { BLOCK_CONFIG, ENEMY_CONFIG, MAP_VARIANTS, TERRITORY_CONFIG } from "../content/config";
+import { TILE_SIZE, type BlockId, type EnemyState, type MapVariantId, type TerritoryId, type TileState, type WorldState } from "./types";
 import { coordNoise } from "./random";
 
 const WORLD_WIDTH = 184;
@@ -57,9 +57,13 @@ const ORE_CLUSTER_RULES: OreClusterRule[] = [
   }
 ];
 
-export function createWorld(seed: string): WorldState {
+export function createWorld(seed: string, territory: TerritoryId = "shimmerVeins", variant: MapVariantId = "ribbon"): WorldState {
   const tiles: TileState[] = [];
-  const spawnTile = { x: 36, y: Math.floor(WORLD_HEIGHT * 0.48) };
+  const safeTerritory = TERRITORY_CONFIG[territory] ? territory : "shimmerVeins";
+  const safeVariant = MAP_VARIANTS[variant] ? variant : "ribbon";
+  const territoryConfig = TERRITORY_CONFIG[safeTerritory];
+  const variantConfig = MAP_VARIANTS[safeVariant];
+  const spawnTile = { x: 36, y: Math.floor(WORLD_HEIGHT * 0.48 + variantConfig.centerShift * 0.35) };
 
   for (let y = 0; y < WORLD_HEIGHT; y += 1) {
     for (let x = 0; x < WORLD_WIDTH; x += 1) {
@@ -77,12 +81,14 @@ export function createWorld(seed: string): WorldState {
     }
   }
 
-  carveCaveShape(seed, tiles, spawnTile);
+  carveCaveShape(seed, tiles, spawnTile, safeTerritory, safeVariant);
   carveSafePocket(tiles, spawnTile.x, spawnTile.y, 6, 5);
-  placeOreClusters(seed, tiles, spawnTile);
+  placeOreClusters(seed, tiles, spawnTile, territoryConfig.oreRichness);
 
   return {
     seed,
+    territory: safeTerritory,
+    variant: safeVariant,
     width: WORLD_WIDTH,
     height: WORLD_HEIGHT,
     tileSize: TILE_SIZE,
@@ -101,33 +107,48 @@ export function createWorld(seed: string): WorldState {
 export function createInitialEnemies(world: WorldState): EnemyState[] {
   const enemies: EnemyState[] = [];
   let id = 0;
+  const spawnTileX = Math.floor(world.spawn.x / TILE_SIZE);
+  const spawnTileY = Math.floor(world.spawn.y / TILE_SIZE);
+  const territoryConfig = TERRITORY_CONFIG[world.territory];
+  const stepBase = Math.max(5, Math.round(7 / territoryConfig.enemyDensity));
 
-  for (let x = 24; x < world.width - 18; x += 13) {
-    const roll = coordNoise(world.seed, x, 17, 200);
-    const kind = roll < 0.34 ? "arcWarden" : roll < 0.7 ? "prismStalker" : "sparkSac";
-    const y = findOpenY(world, x, roll);
+  for (let x = 18; x < world.width - 16;) {
+    const stepRoll = coordNoise(world.seed, x, 11, 205);
+    const positionRoll = coordNoise(world.seed, x, 19, 206);
+    const enemyX = Math.min(world.width - 17, Math.max(3, x + Math.round((positionRoll - 0.5) * 7)));
+    const roll = coordNoise(world.seed, enemyX, 17, 200);
+    const kind = roll < 0.28 ? "arcWarden" : roll < 0.66 ? "prismStalker" : "sparkSac";
+    const y = findOpenY(world, enemyX, coordNoise(world.seed, enemyX, id, 207));
+    x += stepBase + Math.floor(stepRoll * 5);
 
     if (y === null) {
       continue;
     }
 
+    const spawnDistance = Math.abs(enemyX - spawnTileX) + Math.abs(y - spawnTileY);
+    if (spawnDistance < 19) {
+      continue;
+    }
+
     const config = ENEMY_CONFIG[kind];
+    const timerRoll = coordNoise(world.seed, enemyX, y, 208);
+    const directionRoll = coordNoise(world.seed, y, enemyX, 209);
     enemies.push({
       id: `enemy-${id}`,
       kind,
-      x: x * TILE_SIZE + TILE_SIZE / 2,
+      x: enemyX * TILE_SIZE + TILE_SIZE / 2,
       y: y * TILE_SIZE + TILE_SIZE / 2,
       vx: 0,
       vy: 0,
-      anchorX: x * TILE_SIZE + TILE_SIZE / 2,
+      anchorX: enemyX * TILE_SIZE + TILE_SIZE / 2,
       anchorY: y * TILE_SIZE + TILE_SIZE / 2,
       health: config.health,
       maxHealth: config.health,
       radius: config.radius,
       state: kind === "arcWarden" ? "pulsing" : kind === "sparkSac" ? "chase" : "patrol",
-      cooldown: 1.2 + roll * 2.2,
-      timer: roll * 3,
-      direction: roll > 0.5 ? 1 : -1,
+      cooldown: 0.65 + timerRoll * 2.7,
+      timer: timerRoll * 4.2,
+      direction: directionRoll > 0.5 ? 1 : -1,
       targetX: 0,
       targetY: 0
     });
@@ -160,20 +181,23 @@ export function worldBounds(world: WorldState): { width: number; height: number 
   };
 }
 
-function carveCaveShape(seed: string, tiles: TileState[], spawn: { x: number; y: number }): void {
+function carveCaveShape(seed: string, tiles: TileState[], spawn: { x: number; y: number }, territory: TerritoryId, variant: MapVariantId): void {
+  const territoryConfig = TERRITORY_CONFIG[territory];
+  const variantConfig = MAP_VARIANTS[variant];
+
   for (let y = 2; y < WORLD_HEIGHT - 2; y += 1) {
     for (let x = 2; x < WORLD_WIDTH - 2; x += 1) {
-      const center = caveCenterY(x);
-      const cavernBand = 8.8 + coordNoise(seed, x, y, 12) * 4.4;
+      const center = caveCenterY(x, variantConfig.centerShift + territoryConfig.depthBias);
+      const cavernBand = (8.8 + coordNoise(seed, x, y, 12) * 4.4) * variantConfig.tunnelScale;
       const mainTunnel = Math.abs(y - center) < cavernBand;
       const pocketNoise = coordNoise(seed, Math.floor(x / 4), Math.floor(y / 4), 33);
-      const pocket = pocketNoise > 0.72 && Math.abs(y - center) < 26;
+      const pocket = pocketNoise > variantConfig.pocketThreshold && Math.abs(y - center) < 26;
       const faultNoise = coordNoise(seed, Math.floor(x / 7), 0, 71);
-      const verticalFault = faultNoise > 0.86 && Math.abs(y - center) < 22;
+      const verticalFault = faultNoise > variantConfig.faultThreshold && Math.abs(y - center) < 22;
       const branchSeed = coordNoise(seed, Math.floor(x / 12), 0, 111);
-      const branchCenter = center + Math.sin(x * 0.18 + branchSeed * 6) * 18;
+      const branchCenter = center + Math.sin(x * 0.18 + branchSeed * 6) * (18 + territoryConfig.depthBias * 0.25);
       const branchNoise = coordNoise(seed, Math.floor(x / 8), Math.floor(y / 5), 121);
-      const sideBranch = x > spawn.x + 16 && branchNoise > 0.82 && Math.abs(y - branchCenter) < 3.4;
+      const sideBranch = x > spawn.x + 16 && branchNoise > variantConfig.branchThreshold && Math.abs(y - branchCenter) < 3.4;
       const nearSpawn = Math.abs(x - spawn.x) < 8 && Math.abs(y - spawn.y) < 7;
 
       if (nearSpawn || mainTunnel || pocket || verticalFault || sideBranch) {
@@ -199,13 +223,13 @@ function carveSafePocket(tiles: TileState[], centerX: number, centerY: number, r
   }
 }
 
-function placeOreClusters(seed: string, tiles: TileState[], spawn: { x: number; y: number }): void {
+function placeOreClusters(seed: string, tiles: TileState[], spawn: { x: number; y: number }, oreRichness: number): void {
   const openDepths = measureDistanceFromOpenSpace(tiles, MAX_ORE_DEPTH_FROM_OPEN);
 
   for (let y = 3; y < WORLD_HEIGHT - 3; y += 2) {
     for (let x = 3; x < WORLD_WIDTH - 3; x += 2) {
       for (const rule of ORE_CLUSTER_RULES) {
-        if (!canStartOreCluster(seed, tiles, openDepths, spawn, x, y, rule)) {
+        if (!canStartOreCluster(seed, tiles, openDepths, spawn, x, y, rule, oreRichness)) {
           continue;
         }
 
@@ -223,7 +247,8 @@ function canStartOreCluster(
   spawn: { x: number; y: number },
   x: number,
   y: number,
-  rule: OreClusterRule
+  rule: OreClusterRule,
+  oreRichness: number
 ): boolean {
   const tile = tiles[y * WORLD_WIDTH + x];
   const openDepth = openDepths[y * WORLD_WIDTH + x];
@@ -241,7 +266,8 @@ function canStartOreCluster(
     return false;
   }
 
-  return coordNoise(seed, Math.floor(x / 2), Math.floor(y / 2), rule.salt) > rule.threshold;
+  const adjustedThreshold = Math.max(0.9, rule.threshold - (oreRichness - 1) * 0.035);
+  return coordNoise(seed, Math.floor(x / 2), Math.floor(y / 2), rule.salt) > adjustedThreshold;
 }
 
 function paintOreCluster(
@@ -329,8 +355,8 @@ function getCardinalNeighbors(x: number, y: number): Array<{ x: number; y: numbe
   ];
 }
 
-function caveCenterY(x: number): number {
-  return WORLD_HEIGHT * 0.47 + Math.sin(x * 0.095) * 9 + Math.sin(x * 0.035) * 16;
+function caveCenterY(x: number, centerShift: number): number {
+  return WORLD_HEIGHT * 0.47 + centerShift + Math.sin(x * 0.095) * 9 + Math.sin(x * 0.035) * 16;
 }
 
 function isAncientBorder(x: number, y: number): boolean {

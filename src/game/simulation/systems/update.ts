@@ -1,8 +1,10 @@
 import { BLOCK_CONFIG, ENEMY_CONFIG, ORE_CONFIG } from "../../content/config";
 import { finishRun } from "../state";
+import { recordBossAchievement, recordTaskCollection } from "./progression";
 import {
   TILE_SIZE,
   type BeamState,
+  type BombState,
   type BossSegmentState,
   type EnemyState,
   type GameEvent,
@@ -19,6 +21,13 @@ import { isSolid, tileAtWorld, worldBounds } from "../world";
 const LASER_RANGE = 390;
 const LASER_WIDTH = 13;
 const PICKUP_FRICTION = 0.91;
+const SWARM_BOMB_COUNT = 6;
+const SWARM_BOMB_COOLDOWN = 1.05;
+const SWARM_BOMB_SPEED = 360;
+const SWARM_BOMB_DAMAGE = 42;
+const SWARM_BOMB_TILE_DAMAGE = 34;
+const SWARM_BOMB_RADIUS = 74;
+const SWARM_BOMB_COLOR = 0xd4845a;
 
 export function updateGame(state: GameState, actions: InputActions, dt: number): void {
   state.events = [];
@@ -33,6 +42,7 @@ export function updateGame(state: GameState, actions: InputActions, dt: number):
   state.threat.value = clamp(state.threat.value + dt * 0.32, 0, state.threat.max);
   state.player.invulnerableTimer = Math.max(0, state.player.invulnerableTimer - dt);
   state.player.dashCooldown = Math.max(0, state.player.dashCooldown - dt);
+  state.player.bombCooldown = Math.max(0, state.player.bombCooldown - dt);
   state.player.collectionPulse = Math.max(0, state.player.collectionPulse - dt);
 
   if (actions.toggleIntensityPressed) {
@@ -41,17 +51,19 @@ export function updateGame(state: GameState, actions: InputActions, dt: number):
 
   updateThreatMood(state);
   movePlayer(state, actions, dt);
+  fireSwarmBomb(state, actions);
   updateHeatAndLaser(state, actions, dt);
   updateEnemies(state, dt);
   updateBoss(state, dt);
+  updateBombs(state, dt);
   updateHazards(state, dt);
   updatePickups(state, dt);
 
-  if (distance(state.player, state.world.extraction) < 72 && actions.extractPressed) {
+  if (distance(state.player, state.world.extraction) <= 72 && actions.extractPressed) {
     finishRun(state, "extracted");
   }
 
-  if (!state.boss.active && state.threat.value >= state.threat.max) {
+  if (!state.boss.active && !state.boss.defeated && state.threat.value >= state.threat.max) {
     startBossBreakout(state);
   }
 
@@ -68,7 +80,7 @@ function movePlayer(state: GameState, actions: InputActions, dt: number): void {
   state.player.vx = lerp(state.player.vx, targetVx, 0.22);
   state.player.vy = lerp(state.player.vy, targetVy, 0.22);
 
-  if (actions.secondaryAbility && state.player.dashCooldown <= 0) {
+  if (actions.dashPressed && state.player.dashCooldown <= 0) {
     const aimDir = normalize({
       x: actions.aim.x - state.player.x,
       y: actions.aim.y - state.player.y
@@ -78,6 +90,7 @@ function movePlayer(state: GameState, actions: InputActions, dt: number): void {
     state.player.vy += dash.y * state.stats.dashDistance * 4.2;
     state.player.dashCooldown = 1.45;
     state.player.invulnerableTimer = Math.max(state.player.invulnerableTimer, 0.22);
+    addEvent(state, "player-dash", state.player.x, state.player.y, 0xe8c86a);
   }
 
   const angleVector = {
@@ -104,6 +117,159 @@ function movePlayer(state: GameState, actions: InputActions, dt: number): void {
   }
 }
 
+function fireSwarmBomb(state: GameState, actions: InputActions): void {
+  if (!actions.secondaryAbility || state.player.bombCooldown > 0) {
+    return;
+  }
+
+  const aimDir = normalize({
+    x: actions.aim.x - state.player.x,
+    y: actions.aim.y - state.player.y
+  });
+  const baseAngle = length(aimDir) === 0 ? state.player.angle : Math.atan2(aimDir.y, aimDir.x);
+  const startX = state.player.x + Math.cos(baseAngle) * 22;
+  const startY = state.player.y + Math.sin(baseAngle) * 22;
+
+  for (let index = 0; index < SWARM_BOMB_COUNT; index += 1) {
+    const spread = (index - (SWARM_BOMB_COUNT - 1) / 2) * 0.11;
+    const jitter = (noiseFor(state.elapsed * 100 + index, state.player.x, 911) - 0.5) * 0.08;
+    const angle = baseAngle + spread + jitter;
+    const speed = SWARM_BOMB_SPEED * (0.88 + noiseFor(state.player.y, index + state.elapsed * 77, 912) * 0.24);
+    const bomb: BombState = {
+      id: `bomb-${state.elapsed.toFixed(3)}-${index}-${state.bombs.length}`,
+      x: startX,
+      y: startY,
+      vx: Math.cos(angle) * speed + state.player.vx * 0.14,
+      vy: Math.sin(angle) * speed + state.player.vy * 0.14,
+      radius: 8,
+      age: 0,
+      lifetime: 1.25 + index * 0.035,
+      color: SWARM_BOMB_COLOR
+    };
+    state.bombs.push(bomb);
+  }
+
+  state.player.bombCooldown = SWARM_BOMB_COOLDOWN;
+  state.threat.value = clamp(state.threat.value + 1.2, 0, state.threat.max);
+  addEvent(state, "swarm-bomb-fired", startX, startY, SWARM_BOMB_COLOR);
+}
+
+function updateBombs(state: GameState, dt: number): void {
+  for (let index = state.bombs.length - 1; index >= 0; index -= 1) {
+    const bomb = state.bombs[index];
+    bomb.age += dt;
+
+    const nextX = bomb.x + bomb.vx * dt;
+    const nextY = bomb.y + bomb.vy * dt;
+
+    let shouldExplode = bomb.age >= bomb.lifetime || isSolid(tileAtWorld(state.world, nextX, nextY));
+
+    if (!shouldExplode) {
+      for (const enemy of state.enemies) {
+        if (distance({ x: nextX, y: nextY }, enemy) < enemy.radius + bomb.radius) {
+          shouldExplode = true;
+          break;
+        }
+      }
+    }
+
+    if (!shouldExplode && state.boss.active && !state.boss.defeated && bombHitsBoss(state, nextX, nextY, bomb.radius)) {
+      shouldExplode = true;
+    }
+
+    if (shouldExplode) {
+      explodeSwarmBomb(state, bomb, index);
+      continue;
+    }
+
+    bomb.x = nextX;
+    bomb.y = nextY;
+    bomb.vx *= 0.992;
+    bomb.vy *= 0.992;
+  }
+}
+
+function explodeSwarmBomb(state: GameState, bomb: BombState, bombIndex: number): void {
+  state.bombs.splice(bombIndex, 1);
+
+  for (let enemyIndex = state.enemies.length - 1; enemyIndex >= 0; enemyIndex -= 1) {
+    const enemy = state.enemies[enemyIndex];
+    const dist = distance(bomb, enemy);
+    if (dist > SWARM_BOMB_RADIUS + enemy.radius) {
+      continue;
+    }
+
+    const falloff = 1 - clamp(dist / (SWARM_BOMB_RADIUS + enemy.radius), 0, 0.82);
+    damageEnemy(state, enemy, SWARM_BOMB_DAMAGE * (0.42 + falloff));
+  }
+
+  if (state.boss.active && !state.boss.defeated && bombHitsBoss(state, bomb.x, bomb.y, SWARM_BOMB_RADIUS)) {
+    damageBoss(state, SWARM_BOMB_DAMAGE * 0.72, bomb.x, bomb.y);
+  }
+
+  damageTilesInExplosion(state, bomb.x, bomb.y);
+
+  const hazard: HazardState = {
+    id: `swarm-${state.elapsed.toFixed(3)}-${bomb.id}`,
+    kind: "swarmExplosion",
+    x1: bomb.x,
+    y1: bomb.y,
+    x2: bomb.x,
+    y2: bomb.y,
+    radius: SWARM_BOMB_RADIUS,
+    age: 0,
+    duration: 0.36,
+    damageAt: 0,
+    damage: 0,
+    applied: true
+  };
+  state.hazards.push(hazard);
+  addEvent(state, "swarm-bomb-exploded", bomb.x, bomb.y, bomb.color);
+}
+
+function damageTilesInExplosion(state: GameState, x: number, y: number): void {
+  const minTileX = Math.floor((x - SWARM_BOMB_RADIUS) / TILE_SIZE);
+  const maxTileX = Math.floor((x + SWARM_BOMB_RADIUS) / TILE_SIZE);
+  const minTileY = Math.floor((y - SWARM_BOMB_RADIUS) / TILE_SIZE);
+  const maxTileY = Math.floor((y + SWARM_BOMB_RADIUS) / TILE_SIZE);
+
+  for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
+    for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
+      const tile = state.world.tiles[tileY * state.world.width + tileX];
+      if (!isSolid(tile) || tile.type === "ancient") {
+        continue;
+      }
+
+      const tileCenter = {
+        x: tile.x * TILE_SIZE + TILE_SIZE / 2,
+        y: tile.y * TILE_SIZE + TILE_SIZE / 2
+      };
+      const dist = distance({ x, y }, tileCenter);
+      if (dist > SWARM_BOMB_RADIUS) {
+        continue;
+      }
+
+      const falloff = 1 - clamp(dist / SWARM_BOMB_RADIUS, 0, 0.88);
+      const centerPunch = dist < TILE_SIZE * 1.25 ? 1.35 : 1;
+      damageTile(state, tile, SWARM_BOMB_TILE_DAMAGE * (0.32 + falloff) * centerPunch);
+    }
+  }
+}
+
+function bombHitsBoss(state: GameState, x: number, y: number, radius: number): boolean {
+  if (distance({ x, y }, { x: state.boss.x, y: state.boss.y }) < radius + 30) {
+    return true;
+  }
+
+  for (const segment of state.boss.segments) {
+    if (distance({ x, y }, segment) < radius + segment.radius) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 function updateHeatAndLaser(state: GameState, actions: InputActions, dt: number): void {
   const player = state.player;
   const canFire = player.overheatedTimer <= 0;
@@ -119,7 +285,7 @@ function updateHeatAndLaser(state: GameState, actions: InputActions, dt: number)
       player.heat = state.stats.heatCapacity;
       player.overheatedTimer = 2;
       state.beam.active = false;
-      addEvent(state, "overheat", player.x, player.y, 0xff554c);
+      addEvent(state, "overheat", player.x, player.y, 0xc45a4a);
       return;
     }
   } else {
@@ -317,6 +483,7 @@ function updatePickups(state: GameState, dt: number): void {
 
     if (dist < 20) {
       state.inventory[pickup.ore] += 1;
+      recordTaskCollection(state.upgrades, pickup.ore, 1);
       state.player.collectionPulse = 0.18;
       addEvent(state, "pickup-collected", pickup.x, pickup.y, ORE_CONFIG[pickup.ore].color);
       state.pickups.splice(index, 1);
@@ -332,19 +499,22 @@ function traceBeam(state: GameState, aim: Vec2): {
   enemy?: EnemyState;
 } {
   const origin = { x: state.player.x, y: state.player.y };
-  const dir = normalize({ x: aim.x - origin.x, y: aim.y - origin.y });
+  const aimVector = { x: aim.x - origin.x, y: aim.y - origin.y };
+  const aimDistance = length(aimVector);
+  const dir = normalize(aimVector);
+  const traceDistance = Math.min(LASER_RANGE, aimDistance);
   const fallback = {
     kind: "none" as const,
-    x: origin.x + dir.x * LASER_RANGE,
-    y: origin.y + dir.y * LASER_RANGE
+    x: origin.x + dir.x * traceDistance,
+    y: origin.y + dir.y * traceDistance
   };
 
-  if (length(dir) === 0) {
+  if (aimDistance <= 1) {
     return fallback;
   }
 
   let tileHit: { tile: TileState; distance: number; x: number; y: number } | null = null;
-  for (let step = 8; step <= LASER_RANGE; step += 8) {
+  for (let step = 8; step <= traceDistance; step += 8) {
     const x = origin.x + dir.x * step;
     const y = origin.y + dir.y * step;
     const tile = tileAtWorld(state.world, x, y);
@@ -361,7 +531,7 @@ function traceBeam(state: GameState, aim: Vec2): {
 
   for (const enemy of state.enemies) {
     const hit = rayCircle(origin, dir, enemy, enemy.radius + LASER_WIDTH);
-    if (hit && hit.distance <= LASER_RANGE && (!entityHit || hit.distance < entityHit.distance)) {
+    if (hit && hit.distance <= traceDistance && (!entityHit || hit.distance < entityHit.distance)) {
       entityHit = { kind: "enemy", enemy, distance: hit.distance, x: hit.x, y: hit.y };
     }
   }
@@ -370,7 +540,7 @@ function traceBeam(state: GameState, aim: Vec2): {
     const bossTargets = [{ x: state.boss.x, y: state.boss.y, radius: 30 }, ...state.boss.segments];
     for (const segment of bossTargets) {
       const hit = rayCircle(origin, dir, segment, segment.radius + LASER_WIDTH);
-      if (hit && hit.distance <= LASER_RANGE && (!entityHit || hit.distance < entityHit.distance)) {
+      if (hit && hit.distance <= traceDistance && (!entityHit || hit.distance < entityHit.distance)) {
         entityHit = { kind: "boss", distance: hit.distance, x: hit.x, y: hit.y };
       }
     }
@@ -492,7 +662,7 @@ function startBossBreakout(state: GameState): void {
     radius: Math.max(17, 26 - index)
   }));
   state.threat.mood = "breakout";
-  addEvent(state, "boss-breakout", state.player.x, state.player.y, 0x8b6dff);
+  addEvent(state, "boss-breakout", state.player.x, state.player.y, 0x8a6db8);
 }
 
 function damageBoss(state: GameState, amount: number, x: number, y: number): void {
@@ -501,14 +671,16 @@ function damageBoss(state: GameState, amount: number, x: number, y: number): voi
   }
 
   state.boss.health -= amount;
-  addEvent(state, "boss-hit", x, y, 0x8b6dff, amount);
+  addEvent(state, "boss-hit", x, y, 0x8a6db8, amount);
 
   if (state.boss.health <= 0) {
     state.boss.health = 0;
     state.boss.defeated = true;
     state.boss.active = false;
-    addEvent(state, "boss-defeated", state.boss.x, state.boss.y, 0xf05dff);
-    finishRun(state, "victory");
+    state.threat.value = Math.min(state.threat.value, state.threat.max * 0.42);
+    state.threat.zoneTimer = 0;
+    recordBossAchievement(state.upgrades, "voltrixCore");
+    addEvent(state, "boss-defeated", state.boss.x, state.boss.y, 0xc47a8a);
   }
 }
 
@@ -536,7 +708,7 @@ function damagePlayer(state: GameState, amount: number, x: number, y: number): v
 
   state.player.hull = Math.max(0, state.player.hull - amount);
   state.player.invulnerableTimer = 0.35;
-  addEvent(state, "player-hit", x, y, 0xff554c, amount);
+  addEvent(state, "player-hit", x, y, 0xc45a4a, amount);
 }
 
 function circleHitsSolid(state: GameState, x: number, y: number, radius: number): boolean {
@@ -650,4 +822,3 @@ function lerp(a: number, b: number, t: number): number {
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
-
