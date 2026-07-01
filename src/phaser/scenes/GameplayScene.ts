@@ -261,16 +261,13 @@ export class GameplayScene extends Phaser.Scene {
         this.tileGlows[index] = [bgGlow, coreGlow];
       }
 
-      const texture = TEXTURES.tile(tile.type);
+      const texture = TEXTURES.tile(tile.type, this.state.world.territory, tile.cracked);
       const sprite = this.add.image(x, y, texture).setDepth(2);
 
       // High opacity for basalt/metals to keep beautiful silhouettes
       const alpha = tile.type === "basalt" ? 0.95 : tile.type === "ancient" ? 0.85 : 1.0;
       sprite.setAlpha(alpha);
       sprite.setBlendMode(Phaser.BlendModes.NORMAL);
-      if (tile.cracked) {
-        sprite.setTint(0xd6c8a8);
-      }
       return sprite;
     });
   }

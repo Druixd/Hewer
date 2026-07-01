@@ -25,3 +25,4 @@ Author: Nitish
 - [x] Replace the player smoke trail with a thin velocity-aligned line trail and document the trail direction.
 - [x] Fix territory progression crash by filtering legacy saved territories and falling back to Shimmer Veins for invalid territory or map variant data.
 - [x] Stop Voltrix from respawning after defeat by gating breakout on undefeated boss state and reducing threat pressure after the achievement kill.
+- [x] Implement generated tileset direction with territory-aware procedural tile textures and cracked variants.

@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { BLOCK_CONFIG, ENEMY_CONFIG, ORE_CONFIG } from "../../game/content/config";
 import { TEXTURES } from "../../game/assets/manifest";
-import type { BlockId, EnemyId, OreId } from "../../game/simulation/types";
+import type { BlockId, EnemyId, OreId, TerritoryId } from "../../game/simulation/types";
 
 export function createGeneratedTextures(scene: Phaser.Scene): void {
   createTileTextures(scene);
@@ -14,157 +14,227 @@ export function createGeneratedTextures(scene: Phaser.Scene): void {
 
 function createTileTextures(scene: Phaser.Scene): void {
   const keys = Object.keys(BLOCK_CONFIG) as BlockId[];
-  for (const block of keys) {
-    const key = TEXTURES.tile(block);
-    if (scene.textures.exists(key)) {
-      continue;
-    }
-
-    const config = BLOCK_CONFIG[block];
-    const graphics = scene.make.graphics({ x: 0, y: 0 }, false);
-    graphics.clear();
-
-    if (block !== "empty") {
-      if (block === "basalt") {
-        // Dark basalt with horizontal strata layers
-        graphics.fillStyle(0x0c0a07, 0.95);
-        graphics.fillRect(0, 0, 24, 24);
-
-        // Horizontal sediment strata lines
-        graphics.lineStyle(1, 0x1a1610, 0.6);
-        for (let row = 3; row < 24; row += 5) {
-          graphics.lineBetween(0.5, row + ((row * 7) % 3) * 0.5, 23.5, row);
+  const territories: TerritoryId[] = ["shimmerVeins", "cinderHollows"];
+  for (const territory of territories) {
+    for (const block of keys) {
+      const variants = block === "empty" ? [false] : [false, true];
+      for (const cracked of variants) {
+        const key = TEXTURES.tile(block, territory, cracked);
+        if (scene.textures.exists(key)) {
+          continue;
         }
-        
-        // Subtle outer border
-        graphics.lineStyle(1, 0x1e1a12, 0.7);
-        graphics.strokeRect(0.5, 0.5, 23, 23);
-        graphics.lineStyle(1, config.glow, 0.5);
-        graphics.strokeRect(3.5, 3.5, 17, 17);
-        
-        // Small grain dots scattered
-        graphics.fillStyle(config.glow, 0.4);
-        graphics.fillRect(6, 5, 1, 1);
-        graphics.fillRect(17, 9, 1, 1);
-        graphics.fillRect(10, 17, 1, 1);
-        graphics.fillRect(19, 19, 1, 1);
-        graphics.fillRect(4, 14, 1, 1);
-      } else if (block === "ferrite") {
-        // Layered mineral bands with metallic flecks
-        graphics.fillStyle(0x12100a, 0.95);
-        graphics.fillRect(0, 0, 24, 24);
-        
-        // Horizontal mineral bands
-        graphics.fillStyle(config.glow, 0.18);
-        graphics.fillRect(0, 4, 24, 3);
-        graphics.fillRect(0, 13, 24, 4);
-        
-        graphics.lineStyle(1, 0x7a6842, 0.6);
-        graphics.strokeRect(1.5, 1.5, 21, 21);
-        graphics.lineStyle(1, config.glow, 0.7);
-        graphics.strokeRect(4.5, 4.5, 15, 15);
-        
-        // Metallic fleck dots
-        graphics.fillStyle(0xd4c090, 0.8);
-        graphics.fillRect(3, 5, 1.5, 1.5);
-        graphics.fillRect(14, 5, 1.5, 1.5);
-        graphics.fillRect(8, 14, 1.5, 1.5);
-        graphics.fillRect(18, 15, 1.5, 1.5);
-        
-        // Center mineral grain
-        graphics.fillStyle(config.glow, 0.35);
-        graphics.fillRect(9, 9, 6, 5);
-      } else if (block === "shimmer") {
-        // Crystal facet pattern
-        graphics.fillStyle(0x0e0a18, 0.95);
-        graphics.fillRect(0, 0, 24, 24);
-        
-        graphics.lineStyle(1, 0x7a5da0, 0.85);
-        graphics.strokeRect(1.5, 1.5, 21, 21);
-        
-        // Crystal facet lines (angular cuts)
-        graphics.lineStyle(1, config.glow, 0.7);
-        graphics.lineBetween(4, 2, 20, 12);
-        graphics.lineBetween(20, 12, 12, 22);
-        graphics.lineBetween(12, 22, 4, 2);
-        
-        // Inner gleam highlight
-        graphics.fillStyle(config.glow, 0.55);
-        graphics.fillTriangle(10, 8, 16, 12, 12, 18);
-        
-        // Bright facet point
-        graphics.fillStyle(0xe8d8b4, 0.7);
-        graphics.fillCircle(12, 12, 1.5);
-      } else if (block === "voltaic") {
-        // Branching mineral vein pattern
-        graphics.fillStyle(0x081614, 0.95);
-        graphics.fillRect(0, 0, 24, 24);
-        
-        graphics.lineStyle(1.2, 0x4a9a8a, 0.9);
-        graphics.strokeRect(1.5, 1.5, 21, 21);
-        
-        // Branching vein lines (like real mineral veins)
-        graphics.lineStyle(1.5, config.glow, 0.8);
-        graphics.beginPath();
-        graphics.moveTo(2, 10);
-        graphics.lineTo(8, 12);
-        graphics.lineTo(14, 8);
-        graphics.lineTo(22, 11);
-        graphics.moveTo(8, 12);
-        graphics.lineTo(10, 20);
-        graphics.moveTo(14, 8);
-        graphics.lineTo(16, 2);
-        graphics.strokePath();
-        
-        // Soft center vein node
-        graphics.fillStyle(config.glow, 0.5);
-        graphics.fillCircle(11, 12, 2.5);
-      } else if (block === "aetherium") {
-        // Fossil-like spiral organic pattern
-        graphics.fillStyle(0x180e12, 0.95);
-        graphics.fillRect(0, 0, 24, 24);
-        
-        graphics.lineStyle(1, 0xa06878, 0.85);
-        graphics.strokeRect(1.5, 1.5, 21, 21);
-        
-        // Fossil spiral marks
-        graphics.lineStyle(1.2, config.glow, 0.7);
-        graphics.beginPath();
-        graphics.arc(12, 12, 7, 0, Math.PI * 1.5, false);
-        graphics.strokePath();
-        graphics.beginPath();
-        graphics.arc(12, 12, 4, Math.PI * 0.5, Math.PI * 2, false);
-        graphics.strokePath();
-        
-        // Organic ring dots
-        graphics.fillStyle(config.glow, 0.5);
-        graphics.fillCircle(12, 12, 2);
-        graphics.fillStyle(config.glow, 0.3);
-        graphics.fillCircle(7, 8, 1.5);
-        graphics.fillCircle(16, 16, 1.5);
-      } else if (block === "ancient") {
-        // Worn carved symbols, weathered edges
-        graphics.fillStyle(0x060504, 0.95);
-        graphics.fillRect(0, 0, 24, 24);
-        
-        graphics.lineStyle(1, 0x221e16, 0.7);
-        graphics.strokeRect(0.5, 0.5, 23, 23);
-        
-        graphics.lineStyle(1.2, 0x3a3222, 0.6);
-        graphics.strokeRect(4.5, 4.5, 15, 15);
-        
-        // Worn carved marks
-        graphics.lineStyle(1, config.glow, 0.45);
-        graphics.lineBetween(8, 8, 16, 16);
-        graphics.lineBetween(16, 8, 8, 16);
-        graphics.fillStyle(config.glow, 0.3);
-        graphics.fillCircle(12, 12, 2);
+
+        const graphics = scene.make.graphics({ x: 0, y: 0 }, false);
+        graphics.clear();
+        drawTileTexture(graphics, block, territory, cracked);
+        graphics.generateTexture(key, 24, 24);
+        graphics.destroy();
       }
     }
-
-    graphics.generateTexture(key, 24, 24);
-    graphics.destroy();
   }
+}
+
+interface TilePalette {
+  core: number;
+  inner: number;
+  edge: number;
+  glow: number;
+  hot: number;
+  dim: number;
+}
+
+function drawTileTexture(graphics: Phaser.GameObjects.Graphics, block: BlockId, territory: TerritoryId, cracked: boolean): void {
+  if (block === "empty") {
+    return;
+  }
+
+  const palette = tilePalette(block, territory);
+  drawBlockShell(graphics, palette, block === "ancient" ? 0.82 : 0.62);
+
+  if (block === "basalt") {
+    drawAncientGrid(graphics, palette, territory === "cinderHollows" ? 0.32 : 0.22);
+  } else if (block === "ancient") {
+    drawAncientGrid(graphics, palette, 0.52);
+    drawCircuitMark(graphics, palette);
+  } else if (block === "ferrite") {
+    drawGoldOre(graphics, palette);
+  } else if (block === "shimmer") {
+    drawCrystalOre(graphics, palette);
+  } else if (block === "voltaic") {
+    drawVoltaicOre(graphics, palette);
+  } else if (block === "aetherium") {
+    drawAetheriumOre(graphics, palette);
+  }
+
+  drawCornerNoise(graphics, palette);
+  if (cracked) {
+    drawCrackedOverlay(graphics, palette);
+  }
+}
+
+function tilePalette(block: BlockId, territory: TerritoryId): TilePalette {
+  if ((block === "basalt" || block === "ancient") && territory === "cinderHollows") {
+    return {
+      core: 0x050202,
+      inner: block === "ancient" ? 0x180506 : 0x0a0303,
+      edge: block === "ancient" ? 0xa72f20 : 0x542019,
+      glow: block === "ancient" ? 0xff5a24 : 0x9c2a1f,
+      hot: 0xffb24a,
+      dim: 0x2a0d08
+    };
+  }
+
+  if (block === "ferrite") {
+    return { core: 0x050403, inner: 0x12100a, edge: 0x8a6a24, glow: 0xe8c86a, hot: 0xfff0a8, dim: 0x3b2a10 };
+  }
+  if (block === "shimmer") {
+    return { core: 0x03040a, inner: 0x080c18, edge: 0x335ab8, glow: 0x6ed7ff, hot: 0xe8fbff, dim: 0x142446 };
+  }
+  if (block === "voltaic") {
+    return { core: 0x020807, inner: 0x061412, edge: 0x298f84, glow: 0x6effe7, hot: 0xe2fff8, dim: 0x0d332e };
+  }
+  if (block === "aetherium") {
+    return { core: 0x080207, inner: 0x170812, edge: 0x9a3d78, glow: 0xff76c8, hot: 0xffe4f4, dim: 0x3a122a };
+  }
+  if (block === "ancient") {
+    return { core: 0x030306, inner: 0x090816, edge: 0x5142a0, glow: 0x9a8cff, hot: 0xe8e2ff, dim: 0x171333 };
+  }
+
+  return { core: 0x030304, inner: 0x07070c, edge: 0x322a58, glow: 0x7166b8, hot: 0xb8b0ff, dim: 0x111022 };
+}
+
+function drawBlockShell(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, edgeAlpha: number): void {
+  graphics.fillStyle(0x000000, 1);
+  graphics.fillRect(0, 0, 24, 24);
+  graphics.fillStyle(palette.inner, 0.94);
+  graphics.fillRect(2, 2, 20, 20);
+  graphics.fillStyle(palette.core, 0.96);
+  graphics.fillRect(5, 5, 14, 14);
+
+  graphics.lineStyle(2, palette.edge, edgeAlpha);
+  graphics.strokeRect(1, 1, 22, 22);
+  graphics.lineStyle(1, palette.glow, edgeAlpha * 0.72);
+  graphics.strokeRect(3.5, 3.5, 17, 17);
+  graphics.fillStyle(palette.glow, 0.16);
+  graphics.fillRect(2, 2, 20, 3);
+  graphics.fillRect(2, 19, 20, 3);
+  graphics.fillRect(2, 2, 3, 20);
+  graphics.fillRect(19, 2, 3, 20);
+}
+
+function drawAncientGrid(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, alpha: number): void {
+  graphics.lineStyle(1, palette.dim, alpha);
+  graphics.lineBetween(6, 2, 6, 22);
+  graphics.lineBetween(12, 2, 12, 22);
+  graphics.lineBetween(18, 2, 18, 22);
+  graphics.lineBetween(2, 6, 22, 6);
+  graphics.lineBetween(2, 12, 22, 12);
+  graphics.lineBetween(2, 18, 22, 18);
+
+  graphics.lineStyle(1, palette.edge, alpha + 0.12);
+  graphics.strokeRect(7.5, 7.5, 9, 9);
+}
+
+function drawCircuitMark(graphics: Phaser.GameObjects.Graphics, palette: TilePalette): void {
+  graphics.lineStyle(1, palette.glow, 0.58);
+  graphics.beginPath();
+  graphics.arc(12, 12, 5, Math.PI * 0.1, Math.PI * 1.55, false);
+  graphics.strokePath();
+  graphics.strokeRect(9.5, 9.5, 5, 5);
+  graphics.lineBetween(4, 12, 9, 12);
+  graphics.lineBetween(15, 12, 20, 12);
+  graphics.fillStyle(palette.hot, 0.5);
+  graphics.fillRect(11, 11, 2, 2);
+}
+
+function drawGoldOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette): void {
+  graphics.lineStyle(2, palette.glow, 0.82);
+  graphics.beginPath();
+  graphics.moveTo(3, 15);
+  graphics.lineTo(8, 12);
+  graphics.lineTo(12, 15);
+  graphics.lineTo(17, 8);
+  graphics.lineTo(22, 10);
+  graphics.strokePath();
+  graphics.fillStyle(palette.glow, 0.58);
+  graphics.fillTriangle(7, 9, 13, 12, 9, 18);
+  graphics.fillTriangle(15, 6, 21, 9, 17, 14);
+  graphics.fillStyle(palette.hot, 0.84);
+  graphics.fillRect(10, 13, 2, 2);
+  graphics.fillRect(18, 9, 2, 2);
+}
+
+function drawCrystalOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette): void {
+  graphics.lineStyle(1, palette.glow, 0.74);
+  graphics.lineBetween(4, 3, 20, 12);
+  graphics.lineBetween(20, 12, 12, 22);
+  graphics.lineBetween(12, 22, 4, 3);
+  graphics.lineBetween(8, 6, 12, 22);
+  graphics.fillStyle(palette.glow, 0.36);
+  graphics.fillTriangle(10, 7, 17, 12, 12, 18);
+  graphics.fillStyle(palette.hot, 0.72);
+  graphics.fillCircle(13, 12, 1.4);
+}
+
+function drawVoltaicOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette): void {
+  graphics.lineStyle(1.5, palette.glow, 0.82);
+  graphics.beginPath();
+  graphics.moveTo(2, 10);
+  graphics.lineTo(7, 12);
+  graphics.lineTo(13, 8);
+  graphics.lineTo(21, 11);
+  graphics.moveTo(7, 12);
+  graphics.lineTo(9, 21);
+  graphics.moveTo(13, 8);
+  graphics.lineTo(16, 2);
+  graphics.moveTo(13, 8);
+  graphics.lineTo(18, 18);
+  graphics.strokePath();
+  graphics.fillStyle(palette.hot, 0.7);
+  graphics.fillCircle(12, 10, 1.8);
+  graphics.fillCircle(18, 18, 1.2);
+}
+
+function drawAetheriumOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette): void {
+  graphics.lineStyle(1.2, palette.glow, 0.76);
+  graphics.strokeCircle(12, 12, 6);
+  graphics.strokeCircle(7, 8, 2.5);
+  graphics.strokeCircle(17, 16, 3.2);
+  graphics.fillStyle(palette.glow, 0.38);
+  graphics.fillCircle(12, 12, 3);
+  graphics.fillCircle(7, 8, 1.4);
+  graphics.fillCircle(17, 16, 1.8);
+  graphics.fillStyle(palette.hot, 0.68);
+  graphics.fillCircle(13, 11, 1);
+}
+
+function drawCornerNoise(graphics: Phaser.GameObjects.Graphics, palette: TilePalette): void {
+  graphics.fillStyle(palette.glow, 0.32);
+  graphics.fillRect(4, 4, 1, 1);
+  graphics.fillRect(19, 5, 1, 1);
+  graphics.fillRect(5, 19, 1, 1);
+  graphics.fillRect(18, 18, 1, 1);
+  graphics.fillStyle(palette.dim, 0.42);
+  graphics.fillRect(9, 5, 1, 1);
+  graphics.fillRect(14, 19, 1, 1);
+}
+
+function drawCrackedOverlay(graphics: Phaser.GameObjects.Graphics, palette: TilePalette): void {
+  graphics.lineStyle(1.5, palette.hot, 0.92);
+  graphics.beginPath();
+  graphics.moveTo(3, 4);
+  graphics.lineTo(8, 9);
+  graphics.lineTo(6, 14);
+  graphics.moveTo(8, 9);
+  graphics.lineTo(14, 10);
+  graphics.lineTo(19, 5);
+  graphics.moveTo(13, 11);
+  graphics.lineTo(17, 17);
+  graphics.lineTo(21, 20);
+  graphics.strokePath();
+
+  graphics.lineStyle(1, 0xffffff, 0.35);
+  graphics.lineBetween(8, 9, 14, 10);
 }
 
 function createPickupTextures(scene: Phaser.Scene): void {

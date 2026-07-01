@@ -1,11 +1,11 @@
-import type { BlockId, EnemyId, OreId } from "../simulation/types";
+import type { BlockId, EnemyId, OreId, TerritoryId } from "../simulation/types";
 
 export const TEXTURES = {
   ship: "ship.pickaxe",
   shipGlow: "ship.pickaxe.glow",
   reticle: "ui.reticle",
   pickup: (ore: OreId) => `pickup.${ore}`,
-  tile: (block: BlockId) => `tile.${block}`,
+  tile: (block: BlockId, territory: TerritoryId = "shimmerVeins", cracked = false) => `tile.${territory}.${block}${cracked ? ".cracked" : ""}`,
   enemy: (enemy: EnemyId) => `enemy.${enemy}`,
   bossHead: "boss.voltrix.head",
   bossSegment: "boss.voltrix.segment",
