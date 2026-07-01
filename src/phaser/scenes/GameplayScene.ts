@@ -5,6 +5,7 @@ import { createEmptyActions } from "../../game/input/actions";
 import { createGameState } from "../../game/simulation/state";
 import {
   bankRunResult,
+  canCraftActiveTask,
   createRunSeed,
   loadProgress,
   prepareProgressForNewRun,
@@ -12,7 +13,8 @@ import {
   tryCraftActiveTask
 } from "../../game/simulation/systems/progression";
 import { updateGame } from "../../game/simulation/systems/update";
-import { TILE_SIZE, type GameEvent, type GameState, type InputActions, type UpgradeState } from "../../game/simulation/types";
+import { coordNoise } from "../../game/simulation/random";
+import { TILE_SIZE, type BlockId, type GameEvent, type GameState, type InputActions, type UpgradeState } from "../../game/simulation/types";
 import { getTile, isSolid, worldBounds } from "../../game/simulation/world";
 import { getHudController } from "../../ui/hud/HudController";
 
@@ -22,6 +24,7 @@ const MINIMAP_MARGIN = 20;
 const MINIMAP_ZOOM = 0.08;
 const MINIMAP_RADIUS = MINIMAP_SIZE / MINIMAP_ZOOM / 2;
 const MINIMAP_TILE_RANGE = Math.ceil(MINIMAP_RADIUS / TILE_SIZE) + 2;
+const TILE_VARIANT_COUNT = 4;
 
 export class GameplayScene extends Phaser.Scene {
   private state!: GameState;
@@ -32,11 +35,14 @@ export class GameplayScene extends Phaser.Scene {
   private beamGraphics!: Phaser.GameObjects.Graphics;
   private fieldGraphics!: Phaser.GameObjects.Graphics;
   private hazardGraphics!: Phaser.GameObjects.Graphics;
+  private objectiveGraphics!: Phaser.GameObjects.Graphics;
   private playerLight!: Phaser.GameObjects.Image;
+  private caveEdgeGraphics!: Phaser.GameObjects.Graphics;
   private tileSprites: Array<Phaser.GameObjects.Image | null> = [];
   private tileGlows: Array<Phaser.GameObjects.Image[] | null> = [];
   private enemySprites = new Map<string, Phaser.GameObjects.Image>();
   private pickupSprites = new Map<string, Phaser.GameObjects.Image>();
+  private projectileSprites = new Map<string, { core: Phaser.GameObjects.Image; glow: Phaser.GameObjects.Image }>();
   private bombSprites = new Map<string, { core: Phaser.GameObjects.Image; glow: Phaser.GameObjects.Image }>();
   private bossHead: Phaser.GameObjects.Image | null = null;
   private bossSegments: Phaser.GameObjects.Image[] = [];
@@ -49,6 +55,11 @@ export class GameplayScene extends Phaser.Scene {
   private backdropRect!: Phaser.GameObjects.Rectangle;
   private starsGraphics!: Phaser.GameObjects.Graphics;
   private cavernGrid!: Phaser.GameObjects.Graphics;
+  private parallaxCaveLayers: Phaser.GameObjects.Graphics[] = [];
+  private moodOverlay!: Phaser.GameObjects.Rectangle;
+  private extractionGlow!: Phaser.GameObjects.Image;
+  private audioFeedback!: GameplayAudio;
+  private wasRightDown = false;
 
   constructor() {
     super("GameplayScene");
@@ -66,12 +77,14 @@ export class GameplayScene extends Phaser.Scene {
     this.resultBanked = false;
     this.isPaused = false;
     this.lastTrailTime = 0;
+    this.wasRightDown = false;
 
     this.input.mouse?.disableContextMenu();
     this.keys = this.input.keyboard!.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,SHIFT,ESC,E") as KeyMap;
 
     this.createWorldView();
     this.createActors();
+    this.audioFeedback = new GameplayAudio(this);
     this.configureCamera();
     this.configureHud();
   }
@@ -81,9 +94,11 @@ export class GameplayScene extends Phaser.Scene {
     this.tileGlows = [];
     this.enemySprites.clear();
     this.pickupSprites.clear();
+    this.projectileSprites.clear();
     this.bombSprites.clear();
     this.bossHead = null;
     this.bossSegments = [];
+    this.parallaxCaveLayers = [];
   }
 
   update(_time: number, deltaMs: number): void {
@@ -105,6 +120,8 @@ export class GameplayScene extends Phaser.Scene {
     this.syncActors();
     this.drawTransientWorld();
     this.drawMinimap();
+    this.updateMoodPresentation();
+    this.audioFeedback.updateMood(this.state.threat.mood);
     this.handleEvents(this.state.events);
     hud.update(this.state, this.progress);
 
@@ -204,19 +221,12 @@ export class GameplayScene extends Phaser.Scene {
   }
 
   private createWorldView(): void {
-    this.backdropRect = this.add.rectangle(0, 0, 12000, 8000, 0x06080f, 1).setOrigin(0);
-
-    this.starsGraphics = this.add.graphics();
     const bounds = worldBounds(this.state.world);
-    for (let i = 0; i < 140; i += 1) {
-      const x = (i * 997) % bounds.width;
-      const y = (i * 593) % bounds.height;
-      const alpha = 0.04 + ((i * 17) % 26) / 100;
-      const color = i % 5 === 0 ? 0xd4845a : i % 8 === 0 ? 0x5ab8a8 : 0xf0e4cc;
-      this.starsGraphics.fillStyle(color, alpha);
-      this.starsGraphics.fillRect(x, y, i % 7 === 0 ? 2 : 1, 1);
-    }
-
+    this.backdropRect = this.add.rectangle(0, 0, bounds.width * 1.12, bounds.height * 1.12, 0x111826, 1)
+      .setDepth(-8)
+      .setOrigin(0)
+      .setScrollFactor(0.04);
+    this.drawParallaxSpaceCave(bounds);
     this.drawCavernAtmosphere();
 
     this.tileGlows = new Array(this.state.world.tiles.length).fill(null);
@@ -228,74 +238,127 @@ export class GameplayScene extends Phaser.Scene {
       const x = tile.x * TILE_SIZE + TILE_SIZE / 2;
       const y = tile.y * TILE_SIZE + TILE_SIZE / 2;
 
-      let glowColor: number | null = null;
-      if (tile.type === "shimmer") {
-        glowColor = 0x8a6db8;
-      } else if (tile.type === "voltaic") {
-        glowColor = 0x5ab8a8;
-      } else if (tile.type === "aetherium") {
-        glowColor = 0xc47a8a;
-      } else if (tile.type === "ferrite") {
-        glowColor = 0xc4a86e; // Warm brass glow
-      }
+      const glowColor = oreGlowForTile(tile.type);
 
       if (glowColor !== null) {
-        // Reduced background glow to prevent stack overlay
         const bgGlow = this.add.image(x, y, "fx.glow.radial")
           .setDepth(0)
           .setOrigin(0.5)
-          .setScale(1.5)
-          .setAlpha(0.12)
+          .setScale(0.95)
+          .setAlpha(0.055)
           .setTint(glowColor)
           .setBlendMode(Phaser.BlendModes.ADD);
         
-        // Reduced core glow (layered directly on top of basalt to look emitted from ore itself)
         const coreGlow = this.add.image(x, y, "fx.glow.radial")
           .setDepth(3)
           .setOrigin(0.5)
-          .setScale(0.65)
-          .setAlpha(0.24)
+          .setScale(0.4)
+          .setAlpha(0.15)
           .setTint(glowColor)
           .setBlendMode(Phaser.BlendModes.ADD);
 
         this.tileGlows[index] = [bgGlow, coreGlow];
       }
 
-      const texture = TEXTURES.tile(tile.type, this.state.world.territory, tile.cracked);
+      const texture = TEXTURES.tile(tile.type, this.state.world.territory, tile.cracked, tileVisualVariant(this.state.world.seed, tile.x, tile.y, tile.type, tile.cracked));
       const sprite = this.add.image(x, y, texture).setDepth(2);
 
-      // High opacity for basalt/metals to keep beautiful silhouettes
-      const alpha = tile.type === "basalt" ? 0.95 : tile.type === "ancient" ? 0.85 : 1.0;
+      // Keep cave mass visible without competing with ore, ship, and enemies.
+      const alpha = tile.type === "basalt" ? 1 : tile.type === "ancient" ? 0.96 : 1.0;
       sprite.setAlpha(alpha);
+      sprite.setScale(tile.type === "basalt" || tile.type === "ancient" ? 1.045 : 1.02);
       sprite.setBlendMode(Phaser.BlendModes.NORMAL);
       return sprite;
     });
+
+    this.drawCaveEdges();
+  }
+
+  private drawParallaxSpaceCave(bounds: { width: number; height: number }): void {
+    this.starsGraphics = this.add.graphics().setDepth(-7).setScrollFactor(0.11);
+    for (let i = 0; i < 210; i += 1) {
+      const x = coordNoise(this.state.world.seed, i, 0, 910) * bounds.width;
+      const y = coordNoise(this.state.world.seed, i, 0, 911) * bounds.height;
+      const alpha = 0.08 + coordNoise(this.state.world.seed, i, 0, 912) * 0.22;
+      const color = i % 7 === 0 ? 0xd8a05a : i % 9 === 0 ? 0x64c8b7 : 0xf0e4cc;
+      this.starsGraphics.fillStyle(color, alpha);
+      this.starsGraphics.fillRect(x, y, i % 11 === 0 ? 2 : 1, 1);
+    }
+
+    const farStrata = this.add.graphics().setDepth(-6).setScrollFactor(0.24);
+    for (let i = 0; i < 42; i += 1) {
+      const x = coordNoise(this.state.world.seed, i, 1, 920) * bounds.width;
+      const y = coordNoise(this.state.world.seed, i, 1, 921) * bounds.height;
+      const length = 120 + coordNoise(this.state.world.seed, i, 1, 922) * 280;
+      const color = i % 4 === 0 ? 0x26354a : i % 4 === 1 ? 0x243c3a : 0x31253d;
+      farStrata.lineStyle(2, color, 0.16);
+      farStrata.lineBetween(x, y, Math.min(bounds.width, x + length), y + (coordNoise(this.state.world.seed, i, 1, 923) - 0.5) * 18);
+    }
+
+    const midStrata = this.add.graphics().setDepth(-5).setScrollFactor(0.46);
+    for (let i = 0; i < 58; i += 1) {
+      const x = coordNoise(this.state.world.seed, i, 2, 930) * bounds.width;
+      const y = coordNoise(this.state.world.seed, i, 2, 931) * bounds.height;
+      const length = 48 + coordNoise(this.state.world.seed, i, 2, 933) * 130;
+      midStrata.lineStyle(1, i % 3 === 0 ? 0x3a4d62 : i % 3 === 1 ? 0x36554d : 0x52405f, 0.12);
+      midStrata.lineBetween(x, y, Math.min(bounds.width, x + length), y);
+    }
+
+    const foregroundDust = this.add.graphics().setDepth(1).setScrollFactor(0.72);
+    for (let i = 0; i < 260; i += 1) {
+      const x = coordNoise(this.state.world.seed, i, 3, 940) * bounds.width;
+      const y = coordNoise(this.state.world.seed, i, 3, 941) * bounds.height;
+      const alpha = 0.018 + coordNoise(this.state.world.seed, i, 3, 942) * 0.06;
+      const color = i % 5 === 0 ? 0xc4a86e : i % 8 === 0 ? 0x5ab8a8 : 0xb796d8;
+      foregroundDust.fillStyle(color, alpha);
+      foregroundDust.fillCircle(x, y, i % 9 === 0 ? 1.9 : 0.9);
+    }
+
+    this.parallaxCaveLayers.push(farStrata, midStrata, foregroundDust);
   }
 
   private drawCavernAtmosphere(): void {
     const bounds = worldBounds(this.state.world);
 
-    this.cavernGrid = this.add.graphics().setDepth(0);
-    this.cavernGrid.lineStyle(1, 0x1e1a12, 0.08);
-    for (let x = 0; x < bounds.width; x += TILE_SIZE) {
-      this.cavernGrid.lineBetween(x, 0, x, bounds.height);
-    }
-    for (let y = 0; y < bounds.height; y += TILE_SIZE) {
-      this.cavernGrid.lineBetween(0, y, bounds.width, y);
+    this.cavernGrid = this.add.graphics().setDepth(0).setScrollFactor(0.95);
+    for (let i = 0; i < 220; i += 1) {
+      const x = coordNoise(this.state.world.seed, i, 5, 960) * bounds.width;
+      const y = coordNoise(this.state.world.seed, i, 5, 961) * bounds.height;
+      const alpha = 0.028 + coordNoise(this.state.world.seed, i, 5, 962) * 0.032;
+      const color = i % 6 === 0 ? 0xd4845a : i % 9 === 0 ? 0x5ab8a8 : 0xe8d8b4;
+      this.cavernGrid.fillStyle(color, alpha);
+      this.cavernGrid.fillCircle(x, y, i % 5 === 0 ? 1.6 : 0.8);
     }
 
-    const ambientColors = (TERRITORY_CONFIG[this.state.world.territory] ?? TERRITORY_CONFIG.shimmerVeins).palette.ambient;
-    for (let i = 0; i < 90; i++) {
-      const cx = (i * 997) % bounds.width;
-      const cy = (i * 613) % bounds.height;
-      const color = ambientColors[i % ambientColors.length];
-      const glow = this.add.image(cx, cy, "fx.glow.radial")
-        .setDepth(0)
-        .setOrigin(0.5)
-        .setScale(4.5 + (i % 4) * 1.5)
-        .setAlpha(0.08)
-        .setTint(color)
-        .setBlendMode(Phaser.BlendModes.ADD);
+  }
+
+  private drawCaveEdges(): void {
+    this.caveEdgeGraphics = this.add.graphics().setDepth(4);
+    this.minimap?.ignore(this.caveEdgeGraphics);
+    this.caveEdgeGraphics.lineStyle(2, 0x7f88a8, 0.34);
+
+    for (const tile of this.state.world.tiles) {
+      if (!isSolid(tile)) {
+        continue;
+      }
+
+      const left = tile.x * TILE_SIZE;
+      const top = tile.y * TILE_SIZE;
+      const right = left + TILE_SIZE;
+      const bottom = top + TILE_SIZE;
+
+      if (!isSolid(getTile(this.state.world, tile.x - 1, tile.y))) {
+        this.caveEdgeGraphics.lineBetween(left, top, left, bottom);
+      }
+      if (!isSolid(getTile(this.state.world, tile.x + 1, tile.y))) {
+        this.caveEdgeGraphics.lineBetween(right, top, right, bottom);
+      }
+      if (!isSolid(getTile(this.state.world, tile.x, tile.y - 1))) {
+        this.caveEdgeGraphics.lineBetween(left, top, right, top);
+      }
+      if (!isSolid(getTile(this.state.world, tile.x, tile.y + 1))) {
+        this.caveEdgeGraphics.lineBetween(left, bottom, right, bottom);
+      }
     }
   }
 
@@ -303,11 +366,27 @@ export class GameplayScene extends Phaser.Scene {
     this.beamGraphics = this.add.graphics().setDepth(8);
     this.fieldGraphics = this.add.graphics().setDepth(4);
     this.hazardGraphics = this.add.graphics().setDepth(9);
+    this.objectiveGraphics = this.add.graphics().setDepth(7);
+    this.moodOverlay = this.add.rectangle(0, 0, 1, 1, 0x000000, 0)
+      .setDepth(6)
+      .setOrigin(0)
+      .setScrollFactor(0);
+    this.moodOverlay.setSize(this.scale.width, this.scale.height);
+    this.scale.on("resize", (gameSize: Phaser.Structs.Size) => {
+      this.moodOverlay.setSize(gameSize.width, gameSize.height);
+    });
+    this.extractionGlow = this.add.image(this.state.world.extraction.x, this.state.world.extraction.y, "fx.glow.radial")
+      .setDepth(6)
+      .setOrigin(0.5)
+      .setScale(1.35)
+      .setAlpha(0.32)
+      .setTint(0x5ab8a8)
+      .setBlendMode(Phaser.BlendModes.ADD);
     this.playerLight = this.add.image(this.state.player.x, this.state.player.y, "fx.glow.radial")
       .setDepth(5)
       .setOrigin(0.5)
-      .setScale(4.8)
-      .setAlpha(0.34)
+      .setScale(3.2)
+      .setAlpha(0.2)
       .setTint(0xc4a86e)
       .setBlendMode(Phaser.BlendModes.ADD);
     this.reticle = this.add.image(this.state.player.x, this.state.player.y, TEXTURES.reticle).setDepth(20).setBlendMode(Phaser.BlendModes.ADD);
@@ -344,9 +423,14 @@ export class GameplayScene extends Phaser.Scene {
     if (this.backdropRect) this.minimap.ignore(this.backdropRect);
     if (this.starsGraphics) this.minimap.ignore(this.starsGraphics);
     if (this.cavernGrid) this.minimap.ignore(this.cavernGrid);
+    if (this.caveEdgeGraphics) this.minimap.ignore(this.caveEdgeGraphics);
+    this.parallaxCaveLayers.forEach((layer) => this.minimap.ignore(layer));
     if (this.beamGraphics) this.minimap.ignore(this.beamGraphics);
     if (this.fieldGraphics) this.minimap.ignore(this.fieldGraphics);
     if (this.hazardGraphics) this.minimap.ignore(this.hazardGraphics);
+    if (this.objectiveGraphics) this.minimap.ignore(this.objectiveGraphics);
+    if (this.moodOverlay) this.minimap.ignore(this.moodOverlay);
+    if (this.extractionGlow) this.minimap.ignore(this.extractionGlow);
     if (this.playerLight) this.minimap.ignore(this.playerLight);
     if (this.reticle) this.minimap.ignore(this.reticle);
     if (this.ship) this.minimap.ignore(this.ship);
@@ -384,8 +468,16 @@ export class GameplayScene extends Phaser.Scene {
         return this.progress;
       },
       craftObjective: () => {
+        const wasReady = canCraftActiveTask(this.progress);
         this.progress = tryCraftActiveTask(this.progress);
         this.state.upgrades = this.progress;
+        if (wasReady) {
+          this.audioFeedback.play("craftSuccess");
+          this.spawnGlowPulse(this.state.player.x, this.state.player.y, 0x5ab8a8, 1.3, 210);
+        } else {
+          this.audioFeedback.play("craftBlocked");
+          this.cameras.main.shake(60, 0.0018);
+        }
         return this.progress;
       },
       resume: () => {
@@ -434,9 +526,12 @@ export class GameplayScene extends Phaser.Scene {
       : move;
     actions.aim = { x: pointer.worldX, y: pointer.worldY };
     actions.primaryFire = pointer.leftButtonDown();
-    actions.secondaryAbility = pointer.rightButtonDown();
+    const rightDown = pointer.rightButtonDown();
+    actions.secondaryAbility = rightDown;
+    actions.secondaryPressed = rightDown && !this.wasRightDown;
+    this.wasRightDown = rightDown;
     actions.dashPressed = Phaser.Input.Keyboard.JustDown(this.keys.SHIFT);
-    actions.toggleIntensityPressed = Phaser.Input.Keyboard.JustDown(this.keys.SPACE);
+    actions.toggleIntensityPressed = false;
     actions.pausePressed = false;
     actions.extractPressed = Phaser.Input.Keyboard.JustDown(this.keys.E);
     return actions;
@@ -449,9 +544,13 @@ export class GameplayScene extends Phaser.Scene {
     this.ship.setScale(player.collectionPulse > 0 ? 1.08 : 1);
     this.ship.setAlpha(player.invulnerableTimer > 0 ? 0.72 : 1);
     this.playerLight.setPosition(player.x, player.y);
-    this.playerLight.setScale(player.invulnerableTimer > 0 ? 5.4 : 4.8);
-    this.playerLight.setAlpha(player.invulnerableTimer > 0 ? 0.46 : 0.34);
+    this.playerLight.setScale(player.invulnerableTimer > 0 ? 3.8 : 3.2);
+    this.playerLight.setAlpha(player.invulnerableTimer > 0 ? 0.3 : 0.2);
     this.reticle.setPosition(this.input.activePointer.worldX, this.input.activePointer.worldY);
+    const extractionDistance = Math.hypot(player.x - this.state.world.extraction.x, player.y - this.state.world.extraction.y);
+    const extractionPulse = extractionDistance <= 96 ? 0.48 : 0.22 + Math.sin(this.state.elapsed * 2.4) * 0.06;
+    this.extractionGlow.setAlpha(extractionPulse);
+    this.extractionGlow.setScale(extractionDistance <= 96 ? 1.75 : 1.35);
 
     const speed = Math.hypot(player.vx, player.vy);
     if (speed > 35 && this.time.now - this.lastTrailTime > 24) {
@@ -461,8 +560,25 @@ export class GameplayScene extends Phaser.Scene {
 
     this.syncEnemies();
     this.syncPickups();
+    this.syncProjectiles();
     this.syncBombs();
     this.syncBoss();
+  }
+
+  private updateMoodPresentation(): void {
+    if (!this.moodOverlay) {
+      return;
+    }
+
+    if (this.state.threat.mood === "breakout") {
+      this.moodOverlay.setFillStyle(0x4a1630, 0.14 + Math.sin(this.state.elapsed * 9) * 0.035);
+    } else if (this.state.threat.mood === "surging") {
+      this.moodOverlay.setFillStyle(0x32150a, 0.09 + Math.sin(this.state.elapsed * 5) * 0.025);
+    } else if (this.state.threat.mood === "waking") {
+      this.moodOverlay.setFillStyle(0x1a1228, 0.055 + Math.sin(this.state.elapsed * 3) * 0.014);
+    } else {
+      this.moodOverlay.setFillStyle(0x000000, 0);
+    }
   }
 
   private spawnPlayerTrailLine(x: number, y: number, vx: number, vy: number, speed: number): void {
@@ -553,6 +669,49 @@ export class GameplayScene extends Phaser.Scene {
     }
   }
 
+  private syncProjectiles(): void {
+    const live = new Set<string>();
+    for (const projectile of this.state.projectiles) {
+      live.add(projectile.id);
+      let sprites = this.projectileSprites.get(projectile.id);
+      if (!sprites) {
+        const glow = this.add.image(projectile.x, projectile.y, "fx.glow.radial")
+          .setDepth(13)
+          .setTint(projectile.color)
+          .setScale(0.44)
+          .setAlpha(0.58)
+          .setBlendMode(Phaser.BlendModes.ADD);
+        const core = this.add.image(projectile.x, projectile.y, TEXTURES.particleAmber)
+          .setDepth(16)
+          .setTint(0xf0e4cc)
+          .setScale(1.15)
+          .setBlendMode(Phaser.BlendModes.ADD);
+        sprites = { core, glow };
+        this.projectileSprites.set(projectile.id, sprites);
+        this.minimap?.ignore(glow);
+        this.minimap?.ignore(core);
+      }
+
+      const angle = Math.atan2(projectile.vy, projectile.vx);
+      const life = 1 - projectile.age / projectile.lifetime;
+      sprites.core.setPosition(projectile.x, projectile.y);
+      sprites.core.setRotation(angle);
+      sprites.core.setScale(1.05 + life * 0.28, 0.72);
+      sprites.core.setAlpha(0.72 + life * 0.28);
+      sprites.glow.setPosition(projectile.x, projectile.y);
+      sprites.glow.setScale(0.34 + life * 0.32);
+      sprites.glow.setAlpha(0.18 + life * 0.42);
+    }
+
+    for (const [id, sprites] of this.projectileSprites) {
+      if (!live.has(id)) {
+        sprites.core.destroy();
+        sprites.glow.destroy();
+        this.projectileSprites.delete(id);
+      }
+    }
+  }
+
   private syncBombs(): void {
     const live = new Set<string>();
     for (const bomb of this.state.bombs) {
@@ -629,8 +788,42 @@ export class GameplayScene extends Phaser.Scene {
 
   private drawTransientWorld(): void {
     this.drawBeam();
+    this.drawObjectiveTargets();
     this.drawEnemyFields();
     this.drawHazards();
+  }
+
+  private drawObjectiveTargets(): void {
+    this.objectiveGraphics.clear();
+    const focusedOre = this.state.mission.focusedOre;
+    if (!focusedOre || this.state.objectiveTargets.length === 0) {
+      return;
+    }
+
+    const pulse = 0.45 + Math.sin(this.state.elapsed * 5.8) * 0.18;
+    const lineAlpha = Phaser.Math.Clamp(pulse, 0.18, 0.68);
+    for (const target of this.state.objectiveTargets) {
+      const centerX = target.tileX * TILE_SIZE + TILE_SIZE / 2;
+      const centerY = target.tileY * TILE_SIZE + TILE_SIZE / 2;
+      const dx = centerX - this.state.player.x;
+      const dy = centerY - this.state.player.y;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq > 720 * 720) {
+        continue;
+      }
+
+      const color = target.ore === "ferrite"
+        ? 0xe8c86a
+        : target.ore === "shimmer"
+          ? 0x8a6db8
+          : target.ore === "voltaic"
+            ? 0x5ab8a8
+            : 0xc47a8a;
+      this.objectiveGraphics.lineStyle(2, color, lineAlpha);
+      this.objectiveGraphics.strokeRoundedRect(target.tileX * TILE_SIZE + 2, target.tileY * TILE_SIZE + 2, TILE_SIZE - 4, TILE_SIZE - 4, 4);
+      this.objectiveGraphics.fillStyle(color, 0.035 + lineAlpha * 0.035);
+      this.objectiveGraphics.fillRoundedRect(target.tileX * TILE_SIZE + 3, target.tileY * TILE_SIZE + 3, TILE_SIZE - 6, TILE_SIZE - 6, 3);
+    }
   }
 
   private drawBeam(): void {
@@ -641,12 +834,13 @@ export class GameplayScene extends Phaser.Scene {
     }
 
     const color = beam.heat === "high" ? 0xd4845a : 0x5ab8a8;
-    this.beamGraphics.lineStyle(8, color, 0.18);
+    const pulse = beam.heat === "high" ? 1 + Math.sin(this.state.elapsed * 34) * 0.16 : 1;
+    this.beamGraphics.lineStyle(beam.heat === "high" ? 12 : 8, color, beam.heat === "high" ? 0.24 : 0.18);
     this.beamGraphics.lineBetween(beam.x1, beam.y1, beam.x2, beam.y2);
-    this.beamGraphics.lineStyle(3, color, 0.95);
+    this.beamGraphics.lineStyle(beam.heat === "high" ? 4.5 * pulse : 3, color, 0.95);
     this.beamGraphics.lineBetween(beam.x1, beam.y1, beam.x2, beam.y2);
     this.beamGraphics.fillStyle(0xffffff, 0.9);
-    this.beamGraphics.fillCircle(beam.x2, beam.y2, beam.heat === "high" ? 6 : 4);
+    this.beamGraphics.fillCircle(beam.x2, beam.y2, beam.heat === "high" ? 7 * pulse : 4);
   }
 
   private drawEnemyFields(): void {
@@ -682,6 +876,7 @@ export class GameplayScene extends Phaser.Scene {
   }
 
   private syncTilesFromEvents(events: GameEvent[]): void {
+    let edgeRefreshNeeded = false;
     for (const event of events) {
       if (event.type !== "tile-broken") {
         continue;
@@ -699,36 +894,81 @@ export class GameplayScene extends Phaser.Scene {
         glows.forEach((g) => g.destroy());
         this.tileGlows[idx] = null;
       }
+
+      edgeRefreshNeeded = true;
+    }
+
+    if (edgeRefreshNeeded) {
+      this.caveEdgeGraphics?.destroy();
+      this.drawCaveEdges();
     }
   }
 
   private handleEvents(events: GameEvent[]): void {
     for (const event of events) {
       if (event.type === "tile-broken") {
+        this.audioFeedback.play("tileBreak");
         this.spawnBurst(event.x, event.y, event.color, 10, 130);
         this.cameras.main.shake(52, 0.0025);
       }
 
       if (event.type === "pickup-collected") {
+        this.audioFeedback.play("pickup");
         this.spawnBurst(event.x, event.y, event.color, 4, 70);
       }
 
+      if (event.type === "task-progress") {
+        this.audioFeedback.play("orderTick");
+        this.spawnGlowPulse(event.x, event.y, event.color, 0.7, 150);
+      }
+
+      if (event.type === "projectile-fired") {
+        this.audioFeedback.play("weaponShot", 0.12 + Math.min(0.08, (event.amount ?? 0) * 0.08));
+        this.spawnMuzzleFlash(event.x, event.y, event.color);
+      }
+
+      if (event.type === "projectile-hit") {
+        this.audioFeedback.play("tileHit");
+        this.spawnBurst(event.x, event.y, event.color, 4, 58);
+        this.cameras.main.shake(32, 0.0014);
+      }
+
+      if (event.type === "enemy-hit") {
+        this.audioFeedback.play("tileHit");
+        this.spawnBurst(event.x, event.y, event.color, 2, 38);
+      }
+
       if (event.type === "enemy-killed") {
+        this.audioFeedback.play("enemyKill");
         this.spawnBurst(event.x, event.y, event.color, 16, 180);
         this.cameras.main.shake(92, 0.004);
       }
 
       if (event.type === "player-hit") {
+        this.audioFeedback.play("damage");
+        this.spawnBurst(this.state.player.x, this.state.player.y, event.color, 9, 85);
         this.cameras.main.shake(90, 0.006);
       }
 
       if (event.type === "overheat") {
+        this.audioFeedback.play("overheat");
         this.spawnBurst(event.x, event.y, event.color, 12, 95);
         this.cameras.main.shake(80, 0.003);
       }
 
       if (event.type === "player-dash") {
+        this.audioFeedback.play("dash");
         this.spawnGlowPulse(event.x, event.y, event.color, 1.5, 170);
+      }
+
+      if (event.type === "blast-charge-spent") {
+        this.audioFeedback.play("bombLaunch");
+        this.spawnGlowPulse(event.x, event.y, event.color, 0.9, 130);
+      }
+
+      if (event.type === "blast-recharged") {
+        this.audioFeedback.play("blastReady");
+        this.spawnGlowPulse(event.x, event.y, event.color, 1.35, 190);
       }
 
       if (event.type === "swarm-bomb-fired") {
@@ -737,22 +977,74 @@ export class GameplayScene extends Phaser.Scene {
       }
 
       if (event.type === "swarm-bomb-exploded") {
+        this.audioFeedback.play("explosion");
         this.spawnBurst(event.x, event.y, event.color, 18, 190);
         this.spawnGlowPulse(event.x, event.y, event.color, 1.9, 260);
         this.cameras.main.shake(76, 0.0035);
       }
 
       if (event.type === "boss-breakout") {
+        this.audioFeedback.play("bossBreakout");
         this.cameras.main.flash(220, 140, 90, 60, false);
         this.cameras.main.shake(430, 0.01);
       }
 
+      if (event.type === "boss-hit") {
+        this.audioFeedback.play("bossHit");
+        this.spawnBurst(event.x, event.y, event.color, 3, 58);
+      }
+
       if (event.type === "boss-defeated") {
+        this.audioFeedback.play("bossDefeat");
         this.spawnBurst(event.x, event.y, event.color, 44, 360);
         this.cameras.main.flash(320, 232, 216, 180, false);
         this.cameras.main.shake(620, 0.014);
       }
+
+      if (event.type === "mission-started") {
+        this.audioFeedback.play("missionStart");
+        this.spawnGlowPulse(event.x, event.y, event.color, 1.25, 260);
+      }
+
+      if (event.type === "objective-focused") {
+        this.audioFeedback.play("objectiveFocus");
+      }
+
+      if (event.type === "objective-complete") {
+        this.audioFeedback.play("objectiveComplete");
+        this.spawnGlowPulse(event.x, event.y, event.color, 1.45, 220);
+      }
+
+      if (event.type === "craft-ready" || event.type === "extract-ready") {
+        this.audioFeedback.play("objectiveComplete");
+        this.spawnGlowPulse(event.x, event.y, event.color, 1.2, 210);
+      }
+
+      if (event.type === "enemy-wave-started") {
+        this.audioFeedback.play("dangerSwell");
+        this.spawnGlowPulse(event.x, event.y, event.color, 1.7, 260);
+        this.cameras.main.shake(110, 0.0028);
+      }
     }
+  }
+
+  private spawnMuzzleFlash(x: number, y: number, color: number): void {
+    const flash = this.add.image(x, y, "fx.glow.radial")
+      .setDepth(30)
+      .setTint(color)
+      .setScale(0.42)
+      .setAlpha(0.72)
+      .setBlendMode(Phaser.BlendModes.ADD);
+
+    this.minimap?.ignore(flash);
+    this.tweens.add({
+      targets: flash,
+      scale: 1.15,
+      alpha: 0,
+      duration: 95,
+      ease: "Quad.easeOut",
+      onComplete: () => flash.destroy()
+    });
   }
 
   private spawnBurst(x: number, y: number, color: number, count: number, speed: number): void {
@@ -794,4 +1086,278 @@ export class GameplayScene extends Phaser.Scene {
       onComplete: () => glow.destroy()
     });
   }
+}
+
+type AudioCue =
+  | "weaponShot"
+  | "tileHit"
+  | "tileBreak"
+  | "pickup"
+  | "orderTick"
+  | "missionStart"
+  | "objectiveFocus"
+  | "objectiveComplete"
+  | "craftSuccess"
+  | "craftBlocked"
+  | "dash"
+  | "bombLaunch"
+  | "blastReady"
+  | "explosion"
+  | "overheat"
+  | "damage"
+  | "enemyKill"
+  | "dangerSwell"
+  | "bossBreakout"
+  | "bossHit"
+  | "bossDefeat";
+
+class GameplayAudio {
+  private readonly cooldowns = new Map<AudioCue, number>();
+  private unlocked = false;
+  private nextRumbleAt = 0;
+
+  constructor(private readonly scene: Phaser.Scene) {
+    this.scene.input.once("pointerdown", () => {
+      this.unlocked = true;
+      resumeAudioContext(this.scene.sound);
+    });
+    this.scene.input.keyboard?.once("keydown", () => {
+      this.unlocked = true;
+      resumeAudioContext(this.scene.sound);
+    });
+  }
+
+  updateMood(mood: GameState["threat"]["mood"]): void {
+    if (!this.unlocked) {
+      return;
+    }
+
+    const now = this.scene.time.now;
+    if (now < this.nextRumbleAt) {
+      return;
+    }
+
+    const context = this.audioContext();
+    if (!context) {
+      return;
+    }
+
+    if (mood === "breakout") {
+      playTone(context, 46, 0.42, 0.048, "sine");
+      playNoise(context, 0.34, 0.035, 260);
+      this.nextRumbleAt = now + 1150 + Math.random() * 380;
+    } else if (mood === "surging") {
+      playTone(context, 52, 0.34, 0.034, "sine");
+      this.nextRumbleAt = now + 1600 + Math.random() * 620;
+    } else if (mood === "waking") {
+      playTone(context, 58, 0.25, 0.022, "sine");
+      this.nextRumbleAt = now + 2400 + Math.random() * 900;
+    } else {
+      playTone(context, 42, 0.2, 0.012, "sine");
+      this.nextRumbleAt = now + 4300 + Math.random() * 1300;
+    }
+  }
+
+  play(cue: AudioCue, volume?: number): void {
+    if (!this.unlocked) {
+      return;
+    }
+
+    const now = this.scene.time.now;
+    const nextAllowed = this.cooldowns.get(cue) ?? 0;
+    if (now < nextAllowed) {
+      return;
+    }
+
+    const config = audioCueConfig(cue);
+    const context = this.audioContext();
+    if (context) {
+      synthCue(context, cue, volume ?? config.volume);
+    }
+    this.cooldowns.set(cue, now + config.cooldown);
+  }
+
+  private audioContext(): AudioContext | null {
+    const sound = this.scene.sound;
+    if ("context" in sound && sound.context instanceof AudioContext) {
+      return sound.context;
+    }
+    return null;
+  }
+}
+
+function audioCueConfig(cue: AudioCue): { volume: number; cooldown: number } {
+  const map: Record<AudioCue, { volume: number; cooldown: number }> = {
+    weaponShot: { volume: 0.18, cooldown: 44 },
+    tileHit: { volume: 0.16, cooldown: 58 },
+    tileBreak: { volume: 0.24, cooldown: 72 },
+    pickup: { volume: 0.13, cooldown: 42 },
+    orderTick: { volume: 0.12, cooldown: 110 },
+    missionStart: { volume: 0.22, cooldown: 900 },
+    objectiveFocus: { volume: 0.08, cooldown: 280 },
+    objectiveComplete: { volume: 0.18, cooldown: 220 },
+    craftSuccess: { volume: 0.22, cooldown: 220 },
+    craftBlocked: { volume: 0.13, cooldown: 220 },
+    dash: { volume: 0.18, cooldown: 120 },
+    bombLaunch: { volume: 0.18, cooldown: 105 },
+    blastReady: { volume: 0.15, cooldown: 420 },
+    explosion: { volume: 0.28, cooldown: 90 },
+    overheat: { volume: 0.18, cooldown: 300 },
+    damage: { volume: 0.24, cooldown: 190 },
+    enemyKill: { volume: 0.2, cooldown: 82 },
+    dangerSwell: { volume: 0.2, cooldown: 650 },
+    bossBreakout: { volume: 0.34, cooldown: 1200 },
+    bossHit: { volume: 0.14, cooldown: 130 },
+    bossDefeat: { volume: 0.34, cooldown: 1200 }
+  };
+
+  return map[cue];
+}
+
+function synthCue(context: AudioContext, cue: AudioCue, baseVolume: number): void {
+  const volume = baseVolume * (0.86 + Math.random() * 0.2);
+  const pitch = 0.93 + Math.random() * 0.14;
+  if (cue === "weaponShot") {
+    playTone(context, 96 * pitch, 0.06, volume * 0.46, "triangle");
+    playNoise(context, 0.055, volume * 0.28, 840);
+  } else if (cue === "tileHit" || cue === "bossHit") {
+    playTone(context, (cue === "bossHit" ? 64 : 78) * pitch, 0.08, volume * 0.42, "sine");
+    playNoise(context, 0.07, volume * 0.34, cue === "bossHit" ? 520 : 720);
+  } else if (cue === "tileBreak") {
+    playNoise(context, 0.13, volume * 0.48, 620);
+    playTone(context, 360 * pitch, 0.16, volume * 0.18, "triangle", 0.025);
+  } else if (cue === "pickup") {
+    playTone(context, 420 * pitch, 0.09, volume * 0.34, "triangle");
+    playTone(context, 640 * pitch, 0.12, volume * 0.24, "sine", 0.035);
+  } else if (cue === "orderTick" || cue === "objectiveFocus") {
+    playTone(context, 260 * pitch, 0.08, volume * 0.32, "triangle");
+    playTone(context, 380 * pitch, 0.1, volume * 0.16, "sine", 0.04);
+  } else if (cue === "objectiveComplete" || cue === "craftSuccess" || cue === "blastReady") {
+    playTone(context, 220 * pitch, 0.12, volume * 0.3, "triangle");
+    playTone(context, 440 * pitch, 0.16, volume * 0.26, "triangle", 0.05);
+    playTone(context, 660 * pitch, 0.18, volume * 0.16, "sine", 0.105);
+  } else if (cue === "craftBlocked") {
+    playTone(context, 86 * pitch, 0.12, volume * 0.36, "sine");
+    playNoise(context, 0.08, volume * 0.14, 340);
+  } else if (cue === "dash") {
+    playNoise(context, 0.13, volume * 0.36, 1200);
+    playTone(context, 116 * pitch, 0.1, volume * 0.2, "triangle");
+  } else if (cue === "bombLaunch") {
+    playNoise(context, 0.16, volume * 0.36, 980);
+    playTone(context, 72 * pitch, 0.16, volume * 0.34, "sine");
+  } else if (cue === "explosion" || cue === "enemyKill") {
+    playTone(context, (cue === "explosion" ? 52 : 72) * pitch, 0.23, volume * 0.48, "sine");
+    playNoise(context, cue === "explosion" ? 0.24 : 0.12, volume * 0.46, cue === "explosion" ? 420 : 680);
+  } else if (cue === "overheat") {
+    playNoise(context, 0.26, volume * 0.42, 760);
+    playTone(context, 92 * pitch, 0.2, volume * 0.18, "triangle");
+  } else if (cue === "damage") {
+    playTone(context, 48 * pitch, 0.18, volume * 0.56, "sine");
+    playNoise(context, 0.09, volume * 0.28, 480);
+  } else if (cue === "missionStart") {
+    playTone(context, 88 * pitch, 0.2, volume * 0.42, "sine");
+    playTone(context, 176 * pitch, 0.22, volume * 0.22, "triangle", 0.07);
+    playNoise(context, 0.18, volume * 0.16, 620);
+  } else if (cue === "dangerSwell") {
+    playSwell(context, 58 * pitch, 104 * pitch, 0.62, volume * 0.4);
+    playNoise(context, 0.34, volume * 0.22, 380);
+  } else if (cue === "bossBreakout") {
+    playSwell(context, 42 * pitch, 88 * pitch, 0.82, volume * 0.54);
+    playNoise(context, 0.52, volume * 0.38, 300);
+  } else if (cue === "bossDefeat") {
+    playTone(context, 44 * pitch, 0.34, volume * 0.54, "sine");
+    playNoise(context, 0.34, volume * 0.42, 360);
+    playTone(context, 330 * pitch, 0.26, volume * 0.22, "triangle", 0.09);
+  }
+}
+
+function playTone(
+  context: AudioContext,
+  frequency: number,
+  duration: number,
+  volume: number,
+  type: OscillatorType,
+  delay = 0
+): void {
+  const start = context.currentTime + delay;
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = type;
+  oscillator.frequency.setValueAtTime(frequency, start);
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, volume), start + 0.012);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start(start);
+  oscillator.stop(start + duration + 0.025);
+}
+
+function playSwell(context: AudioContext, from: number, to: number, duration: number, volume: number): void {
+  const start = context.currentTime;
+  const oscillator = context.createOscillator();
+  const gain = context.createGain();
+  oscillator.type = "sine";
+  oscillator.frequency.setValueAtTime(from, start);
+  oscillator.frequency.exponentialRampToValueAtTime(to, start + duration);
+  gain.gain.setValueAtTime(0.0001, start);
+  gain.gain.exponentialRampToValueAtTime(Math.max(0.0002, volume), start + duration * 0.44);
+  gain.gain.exponentialRampToValueAtTime(0.0001, start + duration);
+  oscillator.connect(gain);
+  gain.connect(context.destination);
+  oscillator.start(start);
+  oscillator.stop(start + duration + 0.025);
+}
+
+function playNoise(context: AudioContext, duration: number, volume: number, frequency: number): void {
+  const sampleCount = Math.max(1, Math.floor(context.sampleRate * duration));
+  const buffer = context.createBuffer(1, sampleCount, context.sampleRate);
+  const output = buffer.getChannelData(0);
+  for (let index = 0; index < sampleCount; index += 1) {
+    output[index] = (Math.random() * 2 - 1) * (1 - index / sampleCount);
+  }
+
+  const source = context.createBufferSource();
+  const filter = context.createBiquadFilter();
+  const gain = context.createGain();
+  source.buffer = buffer;
+  filter.type = "lowpass";
+  filter.frequency.setValueAtTime(frequency, context.currentTime);
+  gain.gain.setValueAtTime(Math.max(0.0001, volume), context.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + duration);
+  source.connect(filter);
+  filter.connect(gain);
+  gain.connect(context.destination);
+  source.start();
+}
+
+function resumeAudioContext(soundManager: Phaser.Sound.BaseSoundManager): void {
+  if ("context" in soundManager && soundManager.context instanceof AudioContext) {
+    void soundManager.context.resume();
+  }
+}
+
+function oreGlowForTile(block: BlockId): number | null {
+  if (block === "ferrite") {
+    return 0xc4a86e;
+  }
+  if (block === "shimmer") {
+    return 0x8a6db8;
+  }
+  if (block === "voltaic") {
+    return 0x5ab8a8;
+  }
+  if (block === "aetherium") {
+    return 0xc47a8a;
+  }
+  return null;
+}
+
+function tileVisualVariant(seed: string, tileX: number, tileY: number, block: BlockId, cracked: boolean): number {
+  if (block === "empty") {
+    return 0;
+  }
+
+  const crackSalt = cracked ? 39 : 0;
+  return Math.floor(coordNoise(seed, tileX, tileY, 1200 + crackSalt) * TILE_VARIANT_COUNT) % TILE_VARIANT_COUNT;
 }

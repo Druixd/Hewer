@@ -26,3 +26,26 @@ Author: Nitish
 - [x] Fix territory progression crash by filtering legacy saved territories and falling back to Shimmer Veins for invalid territory or map variant data.
 - [x] Stop Voltrix from respawning after defeat by gating breakout on undefeated boss state and reducing threat pressure after the achievement kill.
 - [x] Implement generated tileset direction with territory-aware procedural tile textures and cracked variants.
+- [x] Update the design doc for guided order flow, action feedback, mood states, intensity feedback, and CC0 audio direction.
+- [x] Replace flat order progress with next-action HUD guidance and structured task steps in the HUD and run summary.
+- [x] Reduce empty-cave grid readability by replacing the full-screen cavern grid with sparse cavern dust and local glow cues.
+- [x] Add event-driven action feedback for mining, pickups, task progress, intensity toggles, combat, bombs, overheat, boss states, crafting, and extraction cues.
+- [x] Add Kenney CC0 sci-fi audio assets, Phaser preload keys, throttled SFX playback, and mood ambience layers gated behind user audio unlock.
+- [x] Run TypeScript verification without running a production build.
+- [x] Smoke test the dev server with system Chrome for canvas render, task guidance, mobile HUD spacing, and intensity toggle behavior.
+- [x] Update the design doc for survival space adventure mission direction, projectile drill-shot combat, blast charges, procedural warm audio, pressure waves, and visual ship bay upgrades.
+- [x] Add mission intro and objective preview HUD flow with relevant ore target highlighting and objective state events.
+- [x] Replace the continuous mining laser with ramping projectile drill shots that mine tiles, hit enemies, and trigger impact feedback.
+- [x] Rework right-click swarm bombs into a three-charge blast system with short repeat gating and full-charge recharge timing.
+- [x] Add mission-relevant ore pressure waves that spawn short enemy bursts near valid open-space positions.
+- [x] Replace harsh sample-driven gameplay feedback with warmer procedural WebAudio cues and restrained mood rumbles.
+- [x] Rework the run summary upgrades into a visual ship bay with upgrade nodes, ship silhouette, and before/after bars while keeping save data compatible.
+- [x] Run TypeScript verification without running a production build.
+- [x] Smoke test the dev server with system Chrome for mission overlay, projectile/blast HUD behavior, desktop render, and narrow viewport layout.
+- [x] Extend the design doc for a cockpit service-bay upgrade, workshop/crafting, and cargo exchange direction.
+- [x] Rework the post-run summary into a service console with a bank column, upgrade category rail, workshop material sockets, and cargo exchange readout.
+- [x] Verify the service console with TypeScript and Chrome desktop/mobile smoke testing without running a production build.
+- [x] Remove unused sample audio preload references and delete the unused public audio asset folder after moving gameplay feedback to procedural WebAudio.
+- [x] Redesign the in-run HUD toward minimal art-first objective/cargo chips, align ore glow colors, and soften breakable tile textures toward underworld cave mass instead of visible grid tiles.
+- [x] Add parallax space-cave layers, brighter tile contrast, deterministic tile variants, readable mission frames, and stronger run-seed cave variation.
+- [x] Remove random parallax glare blobs, brighten cave contrast, add readable wall edge outlines, and reduce player/ore glow washout.

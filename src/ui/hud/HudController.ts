@@ -1,6 +1,6 @@
 import { CRAFT_RECIPES, ORE_CONFIG, ORG_TASKS, TERRITORY_CONFIG, UPGRADE_CONFIG, upgradeCost } from "../../game/content/config";
-import { canCraftActiveTask, getActiveTask, getTaskRequirementProgress } from "../../game/simulation/systems/progression";
-import type { GameState, RunResult, UpgradeId, UpgradeState } from "../../game/simulation/types";
+import { canCraftActiveTask, getActiveTask, getTaskGuidance } from "../../game/simulation/systems/progression";
+import type { CraftRecipe, GameState, RunResult, TaskGuidanceState, UpgradeId, UpgradeState } from "../../game/simulation/types";
 
 interface HudHandlers {
   sameSeed: () => void;
@@ -49,18 +49,32 @@ export class HudController {
             <div data-ore="aetherium"></div>
           </div>
           <div class="slot-row">
-            <div class="slot"><span class="slot-key">MBL</span><span class="slot-name">LASER</span></div>
-            <div class="slot"><span class="slot-key">MBR</span><span class="slot-name">BOMB</span></div>
+            <div class="slot"><span class="slot-key">MBL</span><span class="slot-name">DRILL</span></div>
+            <div class="slot blast" data-slot="blast">
+              <span class="slot-key">MBR</span>
+              <span class="slot-name">BLAST</span>
+              <span class="charge-pips" data-value="blast-pips"></span>
+              <span class="charge-timer" data-value="blast-timer"></span>
+            </div>
             <div class="slot"><span class="slot-key">SHIFT</span><span class="slot-name">DASH</span></div>
-            <div class="slot"><span class="slot-key">SPC</span><span class="slot-name">HEAT</span></div>
             <div class="slot"><span class="slot-key">E</span><span class="slot-name">BANK</span></div>
           </div>
         </div>
 
+        <div class="mission-intro" data-panel="mission-intro">
+          <div class="mission-kicker" data-value="mission-territory">FIELD MISSION</div>
+          <div class="mission-title" data-value="mission-title">Org Order</div>
+          <div class="mission-loadout" data-value="mission-loadout"></div>
+          <div class="mission-first" data-value="mission-first"></div>
+        </div>
+
         <div class="hud-task" data-panel="task">
-          <div class="task-name" data-value="task-name">No active order</div>
-          <div class="task-meta" data-value="task-meta"></div>
-          <div class="task-progress" data-value="task-progress"></div>
+          <div class="task-header">
+            <span data-value="task-name">Mission</span>
+            <b data-value="task-meta"></b>
+          </div>
+          <div class="task-next" data-value="task-next">Find ore</div>
+          <div class="task-steps" data-value="task-steps"></div>
         </div>
         
         <div class="hud-center">
@@ -102,10 +116,14 @@ export class HudController {
 
   update(state: GameState, _progress: UpgradeState): void {
     const progress = state.upgrades;
+    this.root.dataset.mood = state.threat.mood;
     setWidth(this.root, "hull", state.player.hull / state.player.maxHull);
     setWidth(this.root, "heat", state.player.heat / state.stats.heatCapacity);
     setText(this.root, "hull", `${Math.ceil(state.player.hull)}`);
     setText(this.root, "heat", state.player.overheatedTimer > 0 ? "LOCK" : `${Math.round(state.player.heat)}`);
+
+    this.renderBlastCharges(state);
+    this.renderMissionIntro(state);
 
     // Calculate current cargo value/score
     const cargoValue = 
@@ -126,10 +144,15 @@ export class HudController {
     const ferrNode = this.root.querySelector<HTMLElement>(".hud-indicators .ferrite");
     if (ferrNode) ferrNode.textContent = `${state.inventory.ferrite} ⬩`;
 
+    if (shimNode) shimNode.innerHTML = renderOreCount("shimmer", state.inventory.shimmer);
+    if (voltNode) voltNode.innerHTML = renderOreCount("voltaic", state.inventory.voltaic);
+    if (aethNode) aethNode.innerHTML = renderOreCount("aetherium", state.inventory.aetherium);
+    if (ferrNode) ferrNode.innerHTML = renderOreCount("ferrite", state.inventory.ferrite);
+
     for (const ore of Object.keys(ORE_CONFIG) as Array<keyof typeof ORE_CONFIG>) {
       const node = this.root.querySelector<HTMLElement>(`[data-ore="${ore}"]`);
       if (node) {
-        node.textContent = `${oreGlyph(ore)} ${state.inventory[ore]}`;
+        node.innerHTML = renderOreCount(ore, state.inventory[ore]);
       }
     }
 
@@ -141,12 +164,19 @@ export class HudController {
     setText(this.root, "boss", `${Math.ceil(state.boss.health)}`);
 
     const dock = this.root.querySelector<HTMLElement>('[data-panel="dock"]');
+    let distToExtraction = Number.POSITIVE_INFINITY;
     if (dock) {
-      const dist = Math.hypot(state.player.x - state.world.extraction.x, state.player.y - state.world.extraction.y);
-      dock.classList.toggle("is-hidden", dist > 72 || state.status !== "playing");
+      distToExtraction = Math.hypot(state.player.x - state.world.extraction.x, state.player.y - state.world.extraction.y);
+      dock.classList.toggle("is-hidden", distToExtraction > 72 || state.status !== "playing");
     }
 
-    this.renderTaskHud(progress);
+    this.renderTaskHud(progress, {
+      cargoValue,
+      distanceToExtraction: distToExtraction,
+      threatMood: state.threat.mood,
+      bossActive: state.boss.active,
+      bossDefeated: state.boss.defeated
+    });
   }
 
   showRunSummary(result: RunResult, progress: UpgradeState): void {
@@ -210,9 +240,55 @@ export class HudController {
       const node = this.root.querySelector<HTMLElement>(`[data-ore="${ore}"]`);
       if (node) {
         node.style.borderColor = ORE_CONFIG[ore].cssColor;
-        node.textContent = `${oreGlyph(ore)} 0`;
+        node.innerHTML = renderOreCount(ore, 0);
       }
     }
+  }
+
+  private renderBlastCharges(state: GameState): void {
+    const slot = this.root.querySelector<HTMLElement>('[data-slot="blast"]');
+    const pips = this.root.querySelector<HTMLElement>('[data-value="blast-pips"]');
+    const timer = this.root.querySelector<HTMLElement>('[data-value="blast-timer"]');
+    if (!slot || !pips || !timer) {
+      return;
+    }
+
+    slot.classList.toggle("is-locked", state.player.blastCharges === 0);
+    slot.classList.toggle("is-cooling", state.player.blastRepeatCooldown > 0);
+    pips.innerHTML = Array.from({ length: 3 }, (_, index) => {
+      const active = index < state.player.blastCharges ? "is-active" : "";
+      return `<i class="${active}"></i>`;
+    }).join("");
+    timer.textContent = state.player.blastCharges === 0 ? `${Math.ceil(state.player.blastRechargeTimer)}s` : "";
+  }
+
+  private renderMissionIntro(state: GameState): void {
+    const panel = this.root.querySelector<HTMLElement>('[data-panel="mission-intro"]');
+    const territory = this.root.querySelector<HTMLElement>('[data-value="mission-territory"]');
+    const title = this.root.querySelector<HTMLElement>('[data-value="mission-title"]');
+    const loadout = this.root.querySelector<HTMLElement>('[data-value="mission-loadout"]');
+    const first = this.root.querySelector<HTMLElement>('[data-value="mission-first"]');
+    const task = getActiveTask(state.upgrades);
+    if (!panel || !territory || !title || !loadout || !first || !task || !state.upgrades.activeTask) {
+      panel?.classList.add("is-hidden");
+      return;
+    }
+
+    panel.classList.toggle("is-hidden", state.mission.introTimer <= 0 || state.status !== "playing");
+    territory.textContent = TERRITORY_CONFIG[task.territory].label.toUpperCase();
+    title.textContent = task.label.replace("Org Order: ", "");
+    loadout.innerHTML = task.requirements
+      .filter((requirement) => requirement.kind === "collect")
+      .map((requirement) => `<span class="mission-material">${oreIcon(requirement.ore)}<b>${requirement.amount}</b></span>`)
+      .join("");
+    const guidance = getTaskGuidance(state.upgrades, task, {
+      cargoValue: 0,
+      distanceToExtraction: Number.POSITIVE_INFINITY,
+      threatMood: state.threat.mood,
+      bossActive: state.boss.active,
+      bossDefeated: state.boss.defeated
+    });
+    first.textContent = guidance.nextAction;
   }
 
   private renderSummary(result: RunResult, progress: UpgradeState): void {
@@ -224,20 +300,18 @@ export class HudController {
     panel.dataset.result = JSON.stringify(result);
     const outcome = result.outcome === "destroyed" ? "SHIP LOST" : "CARGO BANKED";
     const task = result.activeTaskId ? ORG_TASKS.find((candidate) => candidate.id === result.activeTaskId) : getActiveTask(progress);
-    const taskLine = task ? getTaskRequirementProgress(progress, task) : "No active org order";
+    const guidance = getTaskGuidance(progress, task ?? null, { cargoValue: result.creditsEarned, bossDefeated: result.voltrixCore });
     const recipe = task?.recipe ? CRAFT_RECIPES[task.recipe] : null;
     const craftDisabled = !canCraftActiveTask(progress) ? "disabled" : "";
     const craftButton = recipe && !progress.activeTask?.completed
-      ? `<button type="button" data-action="craft-objective" ${craftDisabled}>Craft ${recipe.label}</button>`
+      ? `<button class="workshop-action" type="button" data-action="craft-objective" ${craftDisabled}>Craft ${recipe.label}</button>`
       : "";
     const taskState = progress.activeTask?.completed ? "Complete" : "In progress";
     const bossLine = result.voltrixCore ? "Voltrix Core achieved" : "No boss achievement";
     const rows = [
-      ["Credits", `+${result.creditsEarned}`],
       ["Blocks", `${result.minedBlocks}`],
       ["Kills", `${result.enemiesKilled}`],
       ["Time", formatTime(result.duration)],
-      ["Bank", `${progress.credits}`],
       ["Task", taskState],
       ["Boss", bossLine]
     ];
@@ -250,44 +324,112 @@ export class HudController {
         const maxed = level >= config.maxLevel;
         const disabled = maxed || progress.credits < cost ? "disabled" : "";
         const price = maxed ? "MAX" : `${cost}c`;
-        return `<button type="button" data-action="upgrade" data-upgrade="${id}" ${disabled}>${config.label} L${level} ${price}</button>`;
+        const label = upgradeDisplayLabel(id, config.label);
+        const before = Math.round((level / config.maxLevel) * 100);
+        const after = Math.round((Math.min(config.maxLevel, level + 1) / config.maxLevel) * 100);
+        return `
+          <button class="upgrade-node ${id}" type="button" data-action="upgrade" data-upgrade="${id}" ${disabled}>
+            <span class="node-dot"></span>
+            <span class="node-copy"><b>${label}</b><em>L${level} / ${config.maxLevel}</em></span>
+            <span class="node-bars">
+              <i style="--value:${before}%"></i>
+              <i class="after" style="--value:${after}%"></i>
+            </span>
+            <strong>${price}</strong>
+          </button>
+        `;
       })
       .join("");
 
     panel.innerHTML = `
-      <div class="run-title">${outcome}</div>
-      <div class="summary-task">
-        <b>${task?.label ?? "No active org order"}</b>
-        <span>${taskLine}</span>
+      <div class="service-console">
+        <aside class="service-bank">
+          <div class="bank-title">${outcome}</div>
+          <div class="bank-readout">
+            <span>Run credit</span>
+            <b>+${result.creditsEarned}</b>
+          </div>
+          <div class="bank-readout">
+            <span>Account</span>
+            <b>${progress.credits}</b>
+          </div>
+          <div class="bank-cargo">
+            ${renderCargoRows(result)}
+          </div>
+          <div class="bank-stamp">${result.outcome === "destroyed" ? "Cargo lost" : "Cargo credited"}</div>
+        </aside>
+
+        <section class="service-main">
+          <div class="service-tabs">
+            <span class="is-active">Upgrades & Repairs</span>
+            <span>Workshop</span>
+            <span>Cargo Exchange</span>
+          </div>
+
+          <div class="summary-task">
+            <b>${task?.label ?? "No active org order"}</b>
+            <span>${escapeHtml(guidance.nextAction)}</span>
+            ${renderStepList(guidance, "summary-step-list")}
+          </div>
+
+          <div class="run-grid">
+            ${rows.map(([label, value]) => `<div><span>${label}</span><b>${value}</b></div>`).join("")}
+          </div>
+
+          <div class="ship-bay">
+            <div class="ship-silhouette">
+              <span class="ship-nose"></span>
+              <span class="ship-core"></span>
+              <span class="ship-wing left"></span>
+              <span class="ship-wing right"></span>
+            </div>
+            <div class="upgrade-grid">${upgrades}</div>
+          </div>
+
+          <div class="service-lower">
+            <div class="workshop-bay">
+              <div class="bay-label">Workshop</div>
+              <b>${recipe?.label ?? "No recipe queued"}</b>
+              <div class="material-sockets">${recipe ? renderMaterialSockets(recipe, progress) : ""}</div>
+              ${craftButton || `<button class="workshop-action" type="button" disabled>${progress.activeTask?.completed ? "Order complete" : "No craft available"}</button>`}
+            </div>
+            <div class="exchange-bay">
+              <div class="bay-label">Cargo Exchange</div>
+              <b>${result.outcome === "destroyed" ? "No transfer" : "Transfer complete"}</b>
+              <div class="exchange-total"><span>Run cargo</span><strong>${result.creditsEarned}c</strong></div>
+              <div class="exchange-total"><span>Voltrix core</span><strong>${result.voltrixCore ? "+220c" : "none"}</strong></div>
+            </div>
+          </div>
+        </section>
       </div>
-      <div class="run-grid">
-        ${rows.map(([label, value]) => `<div><span>${label}</span><b>${value}</b></div>`).join("")}
-      </div>
-      <div class="upgrade-grid">${upgrades}</div>
       <div class="run-actions">
-        ${craftButton}
         <button type="button" data-action="same-seed">Same Seed</button>
         <button type="button" data-action="new-run">New Run</button>
       </div>
     `;
   }
 
-  private renderTaskHud(progress: UpgradeState): void {
+  private renderTaskHud(progress: UpgradeState, options: Parameters<typeof getTaskGuidance>[2]): void {
     const panel = this.root.querySelector<HTMLElement>('[data-panel="task"]');
     const name = this.root.querySelector<HTMLElement>('[data-value="task-name"]');
+    const next = this.root.querySelector<HTMLElement>('[data-value="task-next"]');
     const meta = this.root.querySelector<HTMLElement>('[data-value="task-meta"]');
-    const line = this.root.querySelector<HTMLElement>('[data-value="task-progress"]');
+    const steps = this.root.querySelector<HTMLElement>('[data-value="task-steps"]');
     const task = getActiveTask(progress);
 
-    if (!panel || !name || !meta || !line || !task || !progress.activeTask) {
+    if (!panel || !name || !next || !meta || !steps || !task || !progress.activeTask) {
       panel?.classList.add("is-hidden");
       return;
     }
 
+    const guidance = getTaskGuidance(progress, task, options);
     panel.classList.remove("is-hidden");
-    name.textContent = progress.activeTask.completed ? `${task.label} complete` : task.label;
+    panel.classList.toggle("is-ready", guidance.isCraftReady || guidance.isBankReady);
+    panel.classList.toggle("is-danger", Boolean(guidance.bossCue && options?.threatMood !== "quiet"));
+    name.textContent = guidance.label;
+    next.textContent = guidance.nextAction;
     meta.textContent = `${TERRITORY_CONFIG[task.territory].label} / ${task.mapVariant}`;
-    line.textContent = getTaskRequirementProgress(progress, task);
+    steps.innerHTML = renderObjectiveChips(guidance);
   }
 }
 
@@ -305,6 +447,84 @@ function setText(root: HTMLElement, key: string, value: string): void {
   }
 }
 
+function renderStepList(guidance: TaskGuidanceState, className: string): string {
+  if (!guidance.stepStates.length) {
+    return "";
+  }
+
+  return `
+    <div class="${className}">
+      ${guidance.stepStates
+        .map((step) => {
+          const state = step.complete ? "done" : "open";
+          return `<div class="task-step ${state}"><span>${escapeHtml(step.label)}</span><b>${step.current}/${step.target}</b></div>`;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderObjectiveChips(guidance: TaskGuidanceState): string {
+  if (!guidance.stepStates.length) {
+    return "";
+  }
+
+  return `
+    <div class="objective-chip-list">
+      ${guidance.stepStates
+        .map((step) => {
+          const state = step.complete ? "done" : "open";
+          const ore = oreFromStepLabel(step.label);
+          const icon = step.kind === "collect" && ore ? oreIcon(ore) : `<span class="craft-art"></span>`;
+          return `<span class="objective-chip ${state}">${icon}<i>${step.current}/${step.target}</i></span>`;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function renderCargoRows(result: RunResult): string {
+  return (Object.keys(ORE_CONFIG) as Array<keyof typeof ORE_CONFIG>)
+    .map((ore) => {
+      const count = result.inventory[ore];
+      return `<div>${oreIcon(ore)}<b>${count}</b><i>${count * ORE_CONFIG[ore].value}c</i></div>`;
+    })
+    .join("");
+}
+
+function renderMaterialSockets(recipe: CraftRecipe, progress: UpgradeState): string {
+  const materials = progress.activeTask?.materials;
+  return (Object.entries(recipe.costs) as Array<[keyof typeof ORE_CONFIG, number]>)
+    .map(([ore, amount]) => {
+      const current = materials ? materials[ore] : 0;
+      const ready = current >= amount ? "ready" : "missing";
+      return `<span class="${ready}">${oreIcon(ore)}<i>${Math.min(current, amount)}/${amount}</i></span>`;
+    })
+    .join("");
+}
+
+function renderOreCount(ore: keyof typeof ORE_CONFIG, count: number): string {
+  return `${oreIcon(ore)}<b>${count}</b>`;
+}
+
+function oreIcon(ore: keyof typeof ORE_CONFIG): string {
+  return `<span class="ore-art ${ore}" aria-label="${escapeHtml(ORE_CONFIG[ore].label)}"></span>`;
+}
+
+function oreFromStepLabel(label: string): keyof typeof ORE_CONFIG | null {
+  const match = (Object.keys(ORE_CONFIG) as Array<keyof typeof ORE_CONFIG>).find((ore) => ORE_CONFIG[ore].label === label);
+  return match ?? null;
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
 function formatTime(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const rest = Math.floor(seconds % 60)
@@ -313,15 +533,15 @@ function formatTime(seconds: number): string {
   return `${minutes}:${rest}`;
 }
 
-function oreGlyph(ore: keyof typeof ORE_CONFIG): string {
-  if (ore === "ferrite") {
-    return "F";
+function upgradeDisplayLabel(id: UpgradeId, fallback: string): string {
+  if (id === "laserPower") {
+    return "Weapon Output";
   }
-  if (ore === "shimmer") {
-    return "S";
+  if (id === "heatSink") {
+    return "Fire Control";
   }
-  if (ore === "voltaic") {
-    return "V";
+  if (id === "magnetRadius") {
+    return "Cargo Magnet";
   }
-  return "A";
+  return fallback;
 }

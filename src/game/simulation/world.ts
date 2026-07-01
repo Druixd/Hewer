@@ -6,6 +6,19 @@ const WORLD_WIDTH = 184;
 const WORLD_HEIGHT = 88;
 const MAX_ORE_DEPTH_FROM_OPEN = 4;
 
+interface WorldShapeProfile {
+  centerPhaseA: number;
+  centerPhaseB: number;
+  centerAmpA: number;
+  centerAmpB: number;
+  bandBias: number;
+  pocketOffsetX: number;
+  pocketOffsetY: number;
+  faultOffset: number;
+  branchPhase: number;
+  spawnJitterY: number;
+}
+
 interface OreClusterRule {
   type: Extract<BlockId, "ferrite" | "shimmer" | "voltaic" | "aetherium">;
   salt: number;
@@ -63,7 +76,11 @@ export function createWorld(seed: string, territory: TerritoryId = "shimmerVeins
   const safeVariant = MAP_VARIANTS[variant] ? variant : "ribbon";
   const territoryConfig = TERRITORY_CONFIG[safeTerritory];
   const variantConfig = MAP_VARIANTS[safeVariant];
-  const spawnTile = { x: 36, y: Math.floor(WORLD_HEIGHT * 0.48 + variantConfig.centerShift * 0.35) };
+  const shape = createWorldShapeProfile(seed);
+  const spawnTile = {
+    x: 36,
+    y: clampTile(Math.floor(WORLD_HEIGHT * 0.48 + variantConfig.centerShift * 0.35 + shape.spawnJitterY), 14, WORLD_HEIGHT - 15)
+  };
 
   for (let y = 0; y < WORLD_HEIGHT; y += 1) {
     for (let x = 0; x < WORLD_WIDTH; x += 1) {
@@ -81,7 +98,7 @@ export function createWorld(seed: string, territory: TerritoryId = "shimmerVeins
     }
   }
 
-  carveCaveShape(seed, tiles, spawnTile, safeTerritory, safeVariant);
+  carveCaveShape(seed, tiles, spawnTile, safeTerritory, safeVariant, shape);
   carveSafePocket(tiles, spawnTile.x, spawnTile.y, 6, 5);
   placeOreClusters(seed, tiles, spawnTile, territoryConfig.oreRichness);
 
@@ -181,22 +198,37 @@ export function worldBounds(world: WorldState): { width: number; height: number 
   };
 }
 
-function carveCaveShape(seed: string, tiles: TileState[], spawn: { x: number; y: number }, territory: TerritoryId, variant: MapVariantId): void {
+function createWorldShapeProfile(seed: string): WorldShapeProfile {
+  return {
+    centerPhaseA: coordNoise(seed, 0, 0, 401) * Math.PI * 2,
+    centerPhaseB: coordNoise(seed, 0, 0, 402) * Math.PI * 2,
+    centerAmpA: 6.5 + coordNoise(seed, 0, 0, 403) * 5.5,
+    centerAmpB: 11 + coordNoise(seed, 0, 0, 404) * 9,
+    bandBias: -1.6 + coordNoise(seed, 0, 0, 405) * 3.8,
+    pocketOffsetX: Math.floor(coordNoise(seed, 0, 0, 406) * 9),
+    pocketOffsetY: Math.floor(coordNoise(seed, 0, 0, 407) * 9),
+    faultOffset: Math.floor(coordNoise(seed, 0, 0, 408) * 13),
+    branchPhase: coordNoise(seed, 0, 0, 409) * Math.PI * 2,
+    spawnJitterY: Math.round((coordNoise(seed, 0, 0, 410) - 0.5) * 10)
+  };
+}
+
+function carveCaveShape(seed: string, tiles: TileState[], spawn: { x: number; y: number }, territory: TerritoryId, variant: MapVariantId, shape: WorldShapeProfile): void {
   const territoryConfig = TERRITORY_CONFIG[territory];
   const variantConfig = MAP_VARIANTS[variant];
 
   for (let y = 2; y < WORLD_HEIGHT - 2; y += 1) {
     for (let x = 2; x < WORLD_WIDTH - 2; x += 1) {
-      const center = caveCenterY(x, variantConfig.centerShift + territoryConfig.depthBias);
-      const cavernBand = (8.8 + coordNoise(seed, x, y, 12) * 4.4) * variantConfig.tunnelScale;
+      const center = caveCenterY(x, variantConfig.centerShift + territoryConfig.depthBias, shape);
+      const cavernBand = (8.8 + shape.bandBias + coordNoise(seed, x, y, 12) * 4.8) * variantConfig.tunnelScale;
       const mainTunnel = Math.abs(y - center) < cavernBand;
-      const pocketNoise = coordNoise(seed, Math.floor(x / 4), Math.floor(y / 4), 33);
+      const pocketNoise = coordNoise(seed, Math.floor((x + shape.pocketOffsetX) / 4), Math.floor((y + shape.pocketOffsetY) / 4), 33);
       const pocket = pocketNoise > variantConfig.pocketThreshold && Math.abs(y - center) < 26;
-      const faultNoise = coordNoise(seed, Math.floor(x / 7), 0, 71);
+      const faultNoise = coordNoise(seed, Math.floor((x + shape.faultOffset) / 7), 0, 71);
       const verticalFault = faultNoise > variantConfig.faultThreshold && Math.abs(y - center) < 22;
       const branchSeed = coordNoise(seed, Math.floor(x / 12), 0, 111);
-      const branchCenter = center + Math.sin(x * 0.18 + branchSeed * 6) * (18 + territoryConfig.depthBias * 0.25);
-      const branchNoise = coordNoise(seed, Math.floor(x / 8), Math.floor(y / 5), 121);
+      const branchCenter = center + Math.sin(x * 0.18 + branchSeed * 6 + shape.branchPhase) * (18 + territoryConfig.depthBias * 0.25);
+      const branchNoise = coordNoise(seed, Math.floor((x + shape.pocketOffsetY) / 8), Math.floor((y + shape.pocketOffsetX) / 5), 121);
       const sideBranch = x > spawn.x + 16 && branchNoise > variantConfig.branchThreshold && Math.abs(y - branchCenter) < 3.4;
       const nearSpawn = Math.abs(x - spawn.x) < 8 && Math.abs(y - spawn.y) < 7;
 
@@ -355,8 +387,11 @@ function getCardinalNeighbors(x: number, y: number): Array<{ x: number; y: numbe
   ];
 }
 
-function caveCenterY(x: number, centerShift: number): number {
-  return WORLD_HEIGHT * 0.47 + centerShift + Math.sin(x * 0.095) * 9 + Math.sin(x * 0.035) * 16;
+function caveCenterY(x: number, centerShift: number, shape: WorldShapeProfile): number {
+  return WORLD_HEIGHT * 0.47
+    + centerShift
+    + Math.sin(x * 0.095 + shape.centerPhaseA) * shape.centerAmpA
+    + Math.sin(x * 0.035 + shape.centerPhaseB) * shape.centerAmpB;
 }
 
 function isAncientBorder(x: number, y: number): boolean {
@@ -372,6 +407,10 @@ function setTileType(tiles: TileState[], x: number, y: number, type: BlockId, se
   tile.health = config.health;
   tile.destroyed = false;
   tile.cracked = type !== "empty" && coordNoise(seed, x, y, 90) > 0.965;
+}
+
+function clampTile(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
 }
 
 function findOpenY(world: WorldState, x: number, roll: number): number | null {

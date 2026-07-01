@@ -158,3 +158,31 @@ The cave should not read as fully visible at all times. Keep the far environment
 Player movement trails should read as clean velocity-aligned energy streaks, not smoke or expanding bubble particles. The trail should stay thin, readable, and attached to ship motion so it supports speed feedback without covering cave detail.
 
 Terrain tiles should move toward the generated dark sci-fi tileset direction: compact black-core blocks with luminous material edges, readable destructible damage, and distinct ore identities. Shimmer Veins terrain uses purple-blue ancient/cave blocks, cyan crystal fractures, electric voltaic seams, warm gold ferrite veins, and magenta organic aetherium hazards. Early Cinder Hollows terrain can reuse the same block IDs with red-orange cinder shell styling for basalt and ancient blocks until full Cinder-specific resources exist.
+
+## Mission Direction, Combat Feel, And Audio Rework
+
+The active org order should feel like a field mission in a survival space adventure, not a resource checklist. A new run opens with a non-pausing mission banner that announces the territory, order, required materials, and first action. After the intro collapses, a compact objective preview remains on-screen with the current objective and small material progress marks. The persistent HUD should behave more like GTA or Far Cry objective guidance than an inventory receipt.
+
+Mission-relevant ore should be discoverable without revealing the full map. When an order asks for an ore, nearby relevant clusters may receive a warm pulse or outline while they are visible or near the player. The highlight is guidance, not a wallhack: it should help the player understand what to mine without flattening exploration.
+
+The primary weapon changes from a continuous laser beam to a tactile drill-shot weapon. Left click fires single shots; holding fire ramps the cadence over a short spool window until it reaches a fast arcade rhythm. Shots mine tiles and damage enemies through impact events, sparks, short hit-stop, and chunk feedback. Space/intensity is no longer a core visible mode for this pass.
+
+Right click becomes a three-charge blast system. Each click spends one charge and fires the existing swarm-style blast after a short repeat gate. When all charges are spent, one longer recharge restores all three charges at once. The HUD should show three clear charge pips and the recharge state.
+
+Mining mission-relevant ore should trigger authored pressure. Small swarms spawn near valid offscreen/open-space positions while the player is working the objective. The pressure should create survival adventure tension without constant flooding or unfair spawn damage.
+
+Audio should stop sounding robotic or aggressively sci-fi. The target is warm survival space adventure: low thumps, muffled metal impacts, soft mineral chimes, thruster whooshes, distant cave rumble, and non-melodic danger swells. Procedural WebAudio should be the main feedback layer, with short tails, lower pitch, small random variance, and per-cue cooldowns. Existing CC0 files may remain as fallback assets, but they should not define the main moment-to-moment sound.
+
+The post-run upgrade menu should become a visual ship bay. The player should see the ship silhouette and five upgrade nodes around it for weapon output, fire control/cooling, magnet, hull, and engine. Buying or previewing an upgrade should show before/after bars and a short pulse on the affected ship area instead of relying on text-heavy buttons.
+
+The same cockpit service-bay language should extend to crafting and selling. After extraction, the player should read the screen as a ship console: a left bank/cargo column, a main services board, and clear category rails for upgrades, workshop/crafting, and cargo exchange. Upgrades keep the ship-node layout. Crafting uses a modified workshop panel that shows the current order recipe, required material sockets, readiness, and a single craft action. Selling/banking uses a cargo exchange panel that shows extracted cargo value, account balance, and the already-banked result without implying a second manual sell step.
+
+## Cave Readability And Minimal HUD Pass
+
+The HUD should prioritize art and state over text. Objective requirements, cargo readouts, mission intro materials, crafting sockets, and exchange rows should show the actual ore/pickup artwork with compact counts instead of letter placeholders. Text should be limited to the current objective, score/value, and necessary action prompts.
+
+Ore color identity must be consistent from world tile to glow to pickup art to HUD icon. Ferrite reads warm gold, Shimmer reads violet crystal, Voltaic reads cyan/green electric mineral, and Aetherium reads magenta/pink. Any generated glow or impact cue should use the same family as the material it represents.
+
+Breakable cave tiles should stop reading as a visible square grid. Solid terrain remains tile-based internally, but the art should read as underworld space cave mass: dark basalt/ancient chunks with irregular silhouettes, low-contrast internal texture, soft edge scars, and ore embedded into the rock. Avoid repeated nested square outlines on every breakable tile.
+
+Normal gameplay UI should be stripped back. Keep a small objective chip, compact hull/heat strips, art-based cargo row, blast/dash/bank controls, score, boss bar, dock prompt, and minimap. Remove redundant territory/order labels from persistent HUD where the current objective and icon progress already communicate the mission.

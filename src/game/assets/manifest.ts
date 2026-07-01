@@ -5,7 +5,7 @@ export const TEXTURES = {
   shipGlow: "ship.pickaxe.glow",
   reticle: "ui.reticle",
   pickup: (ore: OreId) => `pickup.${ore}`,
-  tile: (block: BlockId, territory: TerritoryId = "shimmerVeins", cracked = false) => `tile.${territory}.${block}${cracked ? ".cracked" : ""}`,
+  tile: (block: BlockId, territory: TerritoryId = "shimmerVeins", cracked = false, variant = 0) => `tile.${territory}.${block}.v${variant}${cracked ? ".cracked" : ""}`,
   enemy: (enemy: EnemyId) => `enemy.${enemy}`,
   bossHead: "boss.voltrix.head",
   bossSegment: "boss.voltrix.segment",

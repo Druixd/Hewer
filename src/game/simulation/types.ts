@@ -51,6 +51,12 @@ export interface PlayerState {
   miningIntensity: "low" | "high";
   dashCooldown: number;
   bombCooldown: number;
+  weaponCooldown: number;
+  weaponSpool: number;
+  blastCharges: number;
+  blastRepeatCooldown: number;
+  blastRechargeTimer: number;
+  objectiveWaveCooldown: number;
   invulnerableTimer: number;
   collectionPulse: number;
 }
@@ -75,6 +81,23 @@ export type TaskRequirement =
       item: ObjectiveItemId;
       amount: number;
     };
+
+export interface TaskStepState {
+  label: string;
+  current: number;
+  target: number;
+  complete: boolean;
+  kind: TaskRequirement["kind"];
+}
+
+export interface TaskGuidanceState {
+  label: string;
+  nextAction: string;
+  stepStates: TaskStepState[];
+  isCraftReady: boolean;
+  isBankReady: boolean;
+  bossCue: string | null;
+}
 
 export interface CraftRecipe {
   id: ObjectiveItemId;
@@ -190,6 +213,19 @@ export interface HazardState {
   applied: boolean;
 }
 
+export interface ProjectileState {
+  id: string;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  age: number;
+  lifetime: number;
+  damage: number;
+  color: number;
+}
+
 export interface BombState {
   id: string;
   x: number;
@@ -200,6 +236,22 @@ export interface BombState {
   age: number;
   lifetime: number;
   color: number;
+}
+
+export interface ObjectiveTargetState {
+  tileX: number;
+  tileY: number;
+  ore: OreId;
+}
+
+export interface MissionCueState {
+  introTimer: number;
+  started: boolean;
+  focusedOre: OreId | null;
+  completedStepCount: number;
+  craftReady: boolean;
+  extractReady: boolean;
+  waveTimer: number;
 }
 
 export interface BossSegmentState {
@@ -244,7 +296,19 @@ export interface GameEvent {
     | "swarm-bomb-exploded"
     | "boss-breakout"
     | "boss-hit"
-    | "boss-defeated";
+    | "boss-defeated"
+    | "intensity-toggled"
+    | "task-progress"
+    | "projectile-fired"
+    | "projectile-hit"
+    | "blast-charge-spent"
+    | "blast-recharged"
+    | "mission-started"
+    | "objective-focused"
+    | "objective-complete"
+    | "craft-ready"
+    | "extract-ready"
+    | "enemy-wave-started";
   x: number;
   y: number;
   color: number;
@@ -274,9 +338,12 @@ export interface GameState {
   enemies: EnemyState[];
   pickups: PickupState[];
   hazards: HazardState[];
+  projectiles: ProjectileState[];
   bombs: BombState[];
   boss: BossState;
   beam: BeamState;
+  objectiveTargets: ObjectiveTargetState[];
+  mission: MissionCueState;
   events: GameEvent[];
   status: RunStatus;
   runResult: RunResult | null;
@@ -290,6 +357,7 @@ export interface InputActions {
   aim: Vec2;
   primaryFire: boolean;
   secondaryAbility: boolean;
+  secondaryPressed: boolean;
   dashPressed: boolean;
   toggleIntensityPressed: boolean;
   pausePressed: boolean;

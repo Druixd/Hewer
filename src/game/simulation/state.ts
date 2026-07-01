@@ -32,6 +32,12 @@ export function createGameState(seed: string, upgrades: UpgradeState): GameState
       miningIntensity: "low",
       dashCooldown: 0,
       bombCooldown: 0,
+      weaponCooldown: 0,
+      weaponSpool: 0,
+      blastCharges: 3,
+      blastRepeatCooldown: 0,
+      blastRechargeTimer: 0,
+      objectiveWaveCooldown: 0,
       invulnerableTimer: 0,
       collectionPulse: 0
     },
@@ -47,6 +53,7 @@ export function createGameState(seed: string, upgrades: UpgradeState): GameState
     enemies: createInitialEnemies(world),
     pickups: [],
     hazards: [],
+    projectiles: [],
     bombs: [],
     boss: {
       active: false,
@@ -68,6 +75,16 @@ export function createGameState(seed: string, upgrades: UpgradeState): GameState
       y2: 0,
       heat: "low",
       hitKind: "none"
+    },
+    objectiveTargets: [],
+    mission: {
+      introTimer: 4.2,
+      started: false,
+      focusedOre: null,
+      completedStepCount: 0,
+      craftReady: false,
+      extractReady: false,
+      waveTimer: 0
     },
     events: [],
     status: "playing",

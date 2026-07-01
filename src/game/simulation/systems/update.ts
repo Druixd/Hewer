@@ -1,9 +1,8 @@
 import { BLOCK_CONFIG, ENEMY_CONFIG, ORE_CONFIG } from "../../content/config";
 import { finishRun } from "../state";
-import { recordBossAchievement, recordTaskCollection } from "./progression";
+import { canCraftActiveTask, getActiveTask, getTaskStepStates, recordBossAchievement, recordTaskCollection } from "./progression";
 import {
   TILE_SIZE,
-  type BeamState,
   type BombState,
   type BossSegmentState,
   type EnemyState,
@@ -11,23 +10,32 @@ import {
   type GameState,
   type HazardState,
   type InputActions,
+  type ObjectiveTargetState,
   type OreId,
   type PickupState,
+  type ProjectileState,
   type TileState,
   type Vec2
 } from "../types";
-import { isSolid, tileAtWorld, worldBounds } from "../world";
+import { getTile, isSolid, tileAtWorld, worldBounds } from "../world";
 
-const LASER_RANGE = 390;
-const LASER_WIDTH = 13;
 const PICKUP_FRICTION = 0.91;
 const SWARM_BOMB_COUNT = 6;
-const SWARM_BOMB_COOLDOWN = 1.05;
+const BLAST_MAX_CHARGES = 3;
+const BLAST_REPEAT_COOLDOWN = 0.34;
+const BLAST_RECHARGE_TIME = 4.2;
 const SWARM_BOMB_SPEED = 360;
 const SWARM_BOMB_DAMAGE = 42;
 const SWARM_BOMB_TILE_DAMAGE = 34;
 const SWARM_BOMB_RADIUS = 74;
 const SWARM_BOMB_COLOR = 0xd4845a;
+const PROJECTILE_SPEED = 720;
+const PROJECTILE_LIFETIME = 0.64;
+const PROJECTILE_BASE_INTERVAL = 0.3;
+const PROJECTILE_FAST_INTERVAL = 0.105;
+const OBJECTIVE_TARGET_RADIUS_TILES = 34;
+const OBJECTIVE_TARGET_LIMIT = 80;
+const OBJECTIVE_WAVE_COOLDOWN = 8.5;
 
 export function updateGame(state: GameState, actions: InputActions, dt: number): void {
   state.events = [];
@@ -40,24 +48,34 @@ export function updateGame(state: GameState, actions: InputActions, dt: number):
   state.elapsed += dt;
   state.threat.zoneTimer += dt;
   state.threat.value = clamp(state.threat.value + dt * 0.32, 0, state.threat.max);
+  state.mission.introTimer = Math.max(0, state.mission.introTimer - dt);
+  if (!state.mission.started) {
+    state.mission.started = true;
+    addEvent(state, "mission-started", state.player.x, state.player.y, 0xe8c86a);
+  }
   state.player.invulnerableTimer = Math.max(0, state.player.invulnerableTimer - dt);
   state.player.dashCooldown = Math.max(0, state.player.dashCooldown - dt);
   state.player.bombCooldown = Math.max(0, state.player.bombCooldown - dt);
+  state.player.weaponCooldown = Math.max(0, state.player.weaponCooldown - dt);
+  state.player.blastRepeatCooldown = Math.max(0, state.player.blastRepeatCooldown - dt);
+  state.player.objectiveWaveCooldown = Math.max(0, state.player.objectiveWaveCooldown - dt);
+  state.mission.waveTimer = Math.max(0, state.mission.waveTimer - dt);
+  updateBlastRecharge(state, dt);
   state.player.collectionPulse = Math.max(0, state.player.collectionPulse - dt);
 
-  if (actions.toggleIntensityPressed) {
-    state.player.miningIntensity = state.player.miningIntensity === "low" ? "high" : "low";
-  }
+  state.beam.active = false;
 
   updateThreatMood(state);
   movePlayer(state, actions, dt);
   fireSwarmBomb(state, actions);
-  updateHeatAndLaser(state, actions, dt);
+  updateDrillShotWeapon(state, actions, dt);
+  updateProjectiles(state, dt);
   updateEnemies(state, dt);
   updateBoss(state, dt);
   updateBombs(state, dt);
   updateHazards(state, dt);
   updatePickups(state, dt);
+  updateMissionState(state);
 
   if (distance(state.player, state.world.extraction) <= 72 && actions.extractPressed) {
     finishRun(state, "extracted");
@@ -118,7 +136,7 @@ function movePlayer(state: GameState, actions: InputActions, dt: number): void {
 }
 
 function fireSwarmBomb(state: GameState, actions: InputActions): void {
-  if (!actions.secondaryAbility || state.player.bombCooldown > 0) {
+  if (!actions.secondaryPressed || state.player.blastRepeatCooldown > 0 || state.player.blastCharges <= 0) {
     return;
   }
 
@@ -149,9 +167,27 @@ function fireSwarmBomb(state: GameState, actions: InputActions): void {
     state.bombs.push(bomb);
   }
 
-  state.player.bombCooldown = SWARM_BOMB_COOLDOWN;
+  state.player.blastCharges = Math.max(0, state.player.blastCharges - 1);
+  state.player.blastRepeatCooldown = BLAST_REPEAT_COOLDOWN;
+  state.player.bombCooldown = state.player.blastRepeatCooldown;
+  if (state.player.blastCharges === 0) {
+    state.player.blastRechargeTimer = BLAST_RECHARGE_TIME;
+  }
   state.threat.value = clamp(state.threat.value + 1.2, 0, state.threat.max);
+  addEvent(state, "blast-charge-spent", startX, startY, SWARM_BOMB_COLOR, state.player.blastCharges);
   addEvent(state, "swarm-bomb-fired", startX, startY, SWARM_BOMB_COLOR);
+}
+
+function updateBlastRecharge(state: GameState, dt: number): void {
+  if (state.player.blastCharges > 0 || state.player.blastRechargeTimer <= 0) {
+    return;
+  }
+
+  state.player.blastRechargeTimer = Math.max(0, state.player.blastRechargeTimer - dt);
+  if (state.player.blastRechargeTimer <= 0) {
+    state.player.blastCharges = BLAST_MAX_CHARGES;
+    addEvent(state, "blast-recharged", state.player.x, state.player.y, SWARM_BOMB_COLOR, BLAST_MAX_CHARGES);
+  }
 }
 
 function updateBombs(state: GameState, dt: number): void {
@@ -270,54 +306,270 @@ function bombHitsBoss(state: GameState, x: number, y: number, radius: number): b
   return false;
 }
 
-function updateHeatAndLaser(state: GameState, actions: InputActions, dt: number): void {
+function updateDrillShotWeapon(state: GameState, actions: InputActions, dt: number): void {
   const player = state.player;
-  const canFire = player.overheatedTimer <= 0;
-  const firing = actions.primaryFire && canFire;
 
   if (player.overheatedTimer > 0) {
     player.overheatedTimer = Math.max(0, player.overheatedTimer - dt);
     player.heat = Math.max(0, player.heat - state.stats.heatCoolRate * dt * 0.65);
-  } else if (firing) {
-    const heatBuild = player.miningIntensity === "high" ? state.stats.heatBuildHigh : state.stats.heatBuildLow;
-    player.heat += heatBuild * dt;
-    if (player.heat >= state.stats.heatCapacity) {
-      player.heat = state.stats.heatCapacity;
-      player.overheatedTimer = 2;
-      state.beam.active = false;
-      addEvent(state, "overheat", player.x, player.y, 0xc45a4a);
-      return;
-    }
-  } else {
-    player.heat = Math.max(0, player.heat - state.stats.heatCoolRate * dt);
-  }
-
-  if (!firing) {
-    state.beam.active = false;
+    player.weaponSpool = Math.max(0, player.weaponSpool - dt * 1.5);
     return;
   }
 
-  const target = traceBeam(state, actions.aim);
-  const beam: BeamState = {
-    active: true,
-    x1: player.x,
-    y1: player.y,
-    x2: target.x,
-    y2: target.y,
-    heat: player.miningIntensity,
-    hitKind: target.kind
-  };
-  state.beam = beam;
-
-  const dps = state.stats.laserDps * (player.miningIntensity === "high" ? 1.62 : 1);
-
-  if (target.kind === "tile" && target.tile) {
-    damageTile(state, target.tile, dps * dt);
-  } else if (target.kind === "enemy" && target.enemy) {
-    damageEnemy(state, target.enemy, dps * 1.12 * dt);
-  } else if (target.kind === "boss") {
-    damageBoss(state, dps * 0.72 * dt, target.x, target.y);
+  if (actions.primaryFire) {
+    player.weaponSpool = clamp(player.weaponSpool + dt * 1.15, 0, 1);
+  } else {
+    player.weaponSpool = Math.max(0, player.weaponSpool - dt * 1.35);
+    player.heat = Math.max(0, player.heat - state.stats.heatCoolRate * dt);
+    return;
   }
+
+  player.heat = Math.max(0, player.heat - state.stats.heatCoolRate * dt * 0.28);
+  if (player.weaponCooldown > 0) {
+    return;
+  }
+
+  const aimDir = normalize({
+    x: actions.aim.x - player.x,
+    y: actions.aim.y - player.y
+  });
+  const direction = length(aimDir) === 0
+    ? { x: Math.cos(player.angle), y: Math.sin(player.angle) }
+    : aimDir;
+  const fireInterval = lerp(PROJECTILE_BASE_INTERVAL, PROJECTILE_FAST_INTERVAL, player.weaponSpool);
+  const shotHeat = lerp(5.2, 3.6, player.weaponSpool);
+  player.heat += shotHeat;
+  player.weaponCooldown = fireInterval;
+
+  if (player.heat >= state.stats.heatCapacity) {
+    player.heat = state.stats.heatCapacity;
+    player.overheatedTimer = 1.45;
+    addEvent(state, "overheat", player.x, player.y, 0xc45a4a);
+    return;
+  }
+
+  const projectile: ProjectileState = {
+    id: `shot-${state.elapsed.toFixed(3)}-${state.projectiles.length}`,
+    x: player.x + direction.x * 24,
+    y: player.y + direction.y * 24,
+    vx: direction.x * PROJECTILE_SPEED + player.vx * 0.12,
+    vy: direction.y * PROJECTILE_SPEED + player.vy * 0.12,
+    radius: 5,
+    age: 0,
+    lifetime: PROJECTILE_LIFETIME,
+    damage: 13 + state.upgrades.laserPower * 4,
+    color: 0xe8c86a
+  };
+  state.projectiles.push(projectile);
+  addEvent(state, "projectile-fired", projectile.x, projectile.y, projectile.color, player.weaponSpool);
+}
+
+function updateProjectiles(state: GameState, dt: number): void {
+  for (let index = state.projectiles.length - 1; index >= 0; index -= 1) {
+    const projectile = state.projectiles[index];
+    projectile.age += dt;
+    const nextX = projectile.x + projectile.vx * dt;
+    const nextY = projectile.y + projectile.vy * dt;
+
+    if (projectile.age >= projectile.lifetime) {
+      state.projectiles.splice(index, 1);
+      continue;
+    }
+
+    const tile = tileAtWorld(state.world, nextX, nextY);
+    if (isSolid(tile)) {
+      const hitX = nextX;
+      const hitY = nextY;
+      const relevantOre = state.mission.focusedOre && tile.type === state.mission.focusedOre;
+      damageTile(state, tile, projectile.damage * (tile.cracked ? 1.2 : 1));
+      if (relevantOre) {
+        triggerObjectiveWave(state, hitX, hitY);
+      }
+      addEvent(state, "projectile-hit", hitX, hitY, BLOCK_CONFIG[tile.type].glow, projectile.damage);
+      state.projectiles.splice(index, 1);
+      continue;
+    }
+
+    let hitEnemy = false;
+    for (const enemy of state.enemies) {
+      if (distance({ x: nextX, y: nextY }, enemy) < enemy.radius + projectile.radius) {
+        damageEnemy(state, enemy, projectile.damage * 1.15);
+        addEvent(state, "projectile-hit", nextX, nextY, ENEMY_CONFIG[enemy.kind].color, projectile.damage);
+        hitEnemy = true;
+        break;
+      }
+    }
+
+    if (hitEnemy) {
+      state.projectiles.splice(index, 1);
+      continue;
+    }
+
+    if (state.boss.active && !state.boss.defeated && bombHitsBoss(state, nextX, nextY, projectile.radius)) {
+      damageBoss(state, projectile.damage * 0.72, nextX, nextY);
+      addEvent(state, "projectile-hit", nextX, nextY, 0x8a6db8, projectile.damage);
+      state.projectiles.splice(index, 1);
+      continue;
+    }
+
+    projectile.x = nextX;
+    projectile.y = nextY;
+  }
+}
+
+function updateMissionState(state: GameState): void {
+  const task = getActiveTask(state.upgrades);
+  const active = state.upgrades.activeTask;
+  const previousOre = state.mission.focusedOre;
+  const focusedOre = getFocusedObjectiveOre(state);
+  state.mission.focusedOre = focusedOre;
+  state.objectiveTargets = focusedOre ? findObjectiveTargets(state, focusedOre) : [];
+
+  if (focusedOre !== previousOre) {
+    addEvent(state, "objective-focused", state.player.x, state.player.y, focusedOre ? ORE_CONFIG[focusedOre].color : 0xe8c86a);
+  }
+
+  if (task && active?.taskId === task.id) {
+    const completedStepCount = getTaskStepStates(state.upgrades, task).filter((step) => step.complete).length;
+    if (completedStepCount > state.mission.completedStepCount) {
+      addEvent(state, "objective-complete", state.player.x, state.player.y, focusedOre ? ORE_CONFIG[focusedOre].color : 0x5ab8a8, completedStepCount);
+    }
+    state.mission.completedStepCount = completedStepCount;
+  } else {
+    state.mission.completedStepCount = 0;
+  }
+
+  const craftReady = canCraftActiveTask(state.upgrades);
+  if (craftReady && !state.mission.craftReady) {
+    addEvent(state, "craft-ready", state.player.x, state.player.y, 0x5ab8a8);
+  }
+  state.mission.craftReady = craftReady;
+
+  const cargoValue =
+    state.inventory.ferrite * ORE_CONFIG.ferrite.value +
+    state.inventory.shimmer * ORE_CONFIG.shimmer.value +
+    state.inventory.voltaic * ORE_CONFIG.voltaic.value +
+    state.inventory.aetherium * ORE_CONFIG.aetherium.value;
+  const extractReady = cargoValue > 0 && distance(state.player, state.world.extraction) <= 96;
+  if (extractReady && !state.mission.extractReady) {
+    addEvent(state, "extract-ready", state.world.extraction.x, state.world.extraction.y, 0x5ab8a8);
+  }
+  state.mission.extractReady = extractReady;
+}
+
+function getFocusedObjectiveOre(state: GameState): OreId | null {
+  const task = getActiveTask(state.upgrades);
+  const active = state.upgrades.activeTask;
+  if (!task || !active || active.taskId !== task.id || active.completed) {
+    return null;
+  }
+
+  for (const requirement of task.requirements) {
+    if (requirement.kind === "collect" && active.collected[requirement.ore] < requirement.amount) {
+      return requirement.ore;
+    }
+  }
+
+  return null;
+}
+
+function findObjectiveTargets(state: GameState, ore: OreId): ObjectiveTargetState[] {
+  const playerTileX = Math.floor(state.player.x / TILE_SIZE);
+  const playerTileY = Math.floor(state.player.y / TILE_SIZE);
+  const candidates: Array<ObjectiveTargetState & { distanceSq: number }> = [];
+
+  for (let y = playerTileY - OBJECTIVE_TARGET_RADIUS_TILES; y <= playerTileY + OBJECTIVE_TARGET_RADIUS_TILES; y += 1) {
+    for (let x = playerTileX - OBJECTIVE_TARGET_RADIUS_TILES; x <= playerTileX + OBJECTIVE_TARGET_RADIUS_TILES; x += 1) {
+      const tile = getTile(state.world, x, y);
+      if (!isSolid(tile) || tile.type !== ore) {
+        continue;
+      }
+
+      const dx = x - playerTileX;
+      const dy = y - playerTileY;
+      const distanceSq = dx * dx + dy * dy;
+      if (distanceSq > OBJECTIVE_TARGET_RADIUS_TILES * OBJECTIVE_TARGET_RADIUS_TILES) {
+        continue;
+      }
+
+      candidates.push({ tileX: x, tileY: y, ore, distanceSq });
+    }
+  }
+
+  return candidates
+    .sort((a, b) => a.distanceSq - b.distanceSq)
+    .slice(0, OBJECTIVE_TARGET_LIMIT)
+    .map(({ tileX, tileY, ore: targetOre }) => ({ tileX, tileY, ore: targetOre }));
+}
+
+function triggerObjectiveWave(state: GameState, x: number, y: number): void {
+  if (state.player.objectiveWaveCooldown > 0 || state.status !== "playing") {
+    return;
+  }
+
+  state.player.objectiveWaveCooldown = OBJECTIVE_WAVE_COOLDOWN;
+  state.mission.waveTimer = 1.2;
+  const waveSize = state.threat.mood === "quiet" ? 2 : state.threat.mood === "waking" ? 3 : 4;
+  let spawned = 0;
+  for (let index = 0; index < waveSize; index += 1) {
+    const enemy = createObjectiveWaveEnemy(state, index);
+    if (enemy) {
+      state.enemies.push(enemy);
+      spawned += 1;
+    }
+  }
+
+  if (spawned > 0) {
+    state.threat.value = clamp(state.threat.value + spawned * 1.4, 0, state.threat.max);
+    addEvent(state, "enemy-wave-started", x, y, 0xd4845a, spawned);
+  }
+}
+
+function createObjectiveWaveEnemy(state: GameState, index: number): EnemyState | null {
+  const kinds: EnemyState["kind"][] = ["sparkSac", "prismStalker", "sparkSac", "arcWarden"];
+  const kind = kinds[(index + Math.floor(state.elapsed)) % kinds.length];
+  const config = ENEMY_CONFIG[kind];
+  const playerTileX = Math.floor(state.player.x / TILE_SIZE);
+  const playerTileY = Math.floor(state.player.y / TILE_SIZE);
+
+  for (let attempt = 0; attempt < 34; attempt += 1) {
+    const angle = noiseFor(state.elapsed * 17 + index, attempt, 930) * Math.PI * 2;
+    const radiusTiles = 17 + Math.floor(noiseFor(index + attempt, state.elapsed * 11, 931) * 11);
+    const tileX = playerTileX + Math.round(Math.cos(angle) * radiusTiles);
+    const tileY = playerTileY + Math.round(Math.sin(angle) * radiusTiles);
+    const tile = getTile(state.world, tileX, tileY);
+    if (isSolid(tile)) {
+      continue;
+    }
+
+    const x = tileX * TILE_SIZE + TILE_SIZE / 2;
+    const y = tileY * TILE_SIZE + TILE_SIZE / 2;
+    if (distance({ x, y }, state.player) < 320 || circleHitsSolid(state, x, y, config.radius)) {
+      continue;
+    }
+
+    return {
+      id: `wave-${state.elapsed.toFixed(3)}-${index}-${state.enemies.length}`,
+      kind,
+      x,
+      y,
+      vx: 0,
+      vy: 0,
+      anchorX: x,
+      anchorY: y,
+      health: config.health,
+      maxHealth: config.health,
+      radius: config.radius,
+      state: kind === "prismStalker" ? "patrol" : kind === "arcWarden" ? "idle" : "chase",
+      cooldown: 0.75 + index * 0.18,
+      timer: noiseFor(x, y, 932) * 2,
+      direction: noiseFor(y, x, 933) > 0.5 ? 1 : -1,
+      targetX: state.player.x,
+      targetY: state.player.y
+    };
+  }
+
+  return null;
 }
 
 function updateEnemies(state: GameState, dt: number): void {
@@ -483,83 +735,19 @@ function updatePickups(state: GameState, dt: number): void {
 
     if (dist < 20) {
       state.inventory[pickup.ore] += 1;
+      const activeTask = getActiveTask(state.upgrades);
+      const contributesToTask = Boolean(
+        activeTask?.requirements.some((requirement) => requirement.kind === "collect" && requirement.ore === pickup.ore)
+      );
       recordTaskCollection(state.upgrades, pickup.ore, 1);
       state.player.collectionPulse = 0.18;
       addEvent(state, "pickup-collected", pickup.x, pickup.y, ORE_CONFIG[pickup.ore].color);
+      if (contributesToTask) {
+        addEvent(state, "task-progress", pickup.x, pickup.y, ORE_CONFIG[pickup.ore].color, 1);
+      }
       state.pickups.splice(index, 1);
     }
   }
-}
-
-function traceBeam(state: GameState, aim: Vec2): {
-  kind: BeamState["hitKind"];
-  x: number;
-  y: number;
-  tile?: TileState;
-  enemy?: EnemyState;
-} {
-  const origin = { x: state.player.x, y: state.player.y };
-  const aimVector = { x: aim.x - origin.x, y: aim.y - origin.y };
-  const aimDistance = length(aimVector);
-  const dir = normalize(aimVector);
-  const traceDistance = Math.min(LASER_RANGE, aimDistance);
-  const fallback = {
-    kind: "none" as const,
-    x: origin.x + dir.x * traceDistance,
-    y: origin.y + dir.y * traceDistance
-  };
-
-  if (aimDistance <= 1) {
-    return fallback;
-  }
-
-  let tileHit: { tile: TileState; distance: number; x: number; y: number } | null = null;
-  for (let step = 8; step <= traceDistance; step += 8) {
-    const x = origin.x + dir.x * step;
-    const y = origin.y + dir.y * step;
-    const tile = tileAtWorld(state.world, x, y);
-    if (isSolid(tile)) {
-      tileHit = { tile, distance: step, x, y };
-      break;
-    }
-  }
-
-  let entityHit:
-    | { kind: "enemy"; enemy: EnemyState; distance: number; x: number; y: number }
-    | { kind: "boss"; distance: number; x: number; y: number }
-    | null = null;
-
-  for (const enemy of state.enemies) {
-    const hit = rayCircle(origin, dir, enemy, enemy.radius + LASER_WIDTH);
-    if (hit && hit.distance <= traceDistance && (!entityHit || hit.distance < entityHit.distance)) {
-      entityHit = { kind: "enemy", enemy, distance: hit.distance, x: hit.x, y: hit.y };
-    }
-  }
-
-  if (state.boss.active && !state.boss.defeated) {
-    const bossTargets = [{ x: state.boss.x, y: state.boss.y, radius: 30 }, ...state.boss.segments];
-    for (const segment of bossTargets) {
-      const hit = rayCircle(origin, dir, segment, segment.radius + LASER_WIDTH);
-      if (hit && hit.distance <= traceDistance && (!entityHit || hit.distance < entityHit.distance)) {
-        entityHit = { kind: "boss", distance: hit.distance, x: hit.x, y: hit.y };
-      }
-    }
-  }
-
-  if (entityHit && (!tileHit || entityHit.distance < tileHit.distance)) {
-    return entityHit;
-  }
-
-  if (tileHit) {
-    return {
-      kind: "tile",
-      tile: tileHit.tile,
-      x: tileHit.x,
-      y: tileHit.y
-    };
-  }
-
-  return fallback;
 }
 
 function damageTile(state: GameState, tile: TileState, amount: number): void {

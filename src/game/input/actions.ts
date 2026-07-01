@@ -6,6 +6,7 @@ export function createEmptyActions(): InputActions {
     aim: { x: 0, y: 0 },
     primaryFire: false,
     secondaryAbility: false,
+    secondaryPressed: false,
     dashPressed: false,
     toggleIntensityPressed: false,
     pausePressed: false,

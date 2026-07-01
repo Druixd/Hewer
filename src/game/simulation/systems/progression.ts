@@ -17,6 +17,8 @@ import type {
   OreId,
   OrgTask,
   RunResult,
+  TaskGuidanceState,
+  TaskStepState,
   TerritoryId,
   UpgradeId,
   UpgradeState
@@ -331,6 +333,106 @@ export function getTaskRequirementProgress(progress: UpgradeState, task: OrgTask
     .join(" | ");
 }
 
+export function getTaskGuidance(progress: UpgradeState, task: OrgTask | null, options?: {
+  cargoValue?: number;
+  distanceToExtraction?: number;
+  threatMood?: "quiet" | "waking" | "surging" | "breakout";
+  bossActive?: boolean;
+  bossDefeated?: boolean;
+}): TaskGuidanceState {
+  const active = progress.activeTask;
+  const stepStates = task && active?.taskId === task.id ? getTaskStepStates(progress, task) : [];
+  const isCraftReady = canCraftActiveTask(progress);
+  const isBankReady = (options?.distanceToExtraction ?? Number.POSITIVE_INFINITY) <= 72 && (options?.cargoValue ?? 0) > 0;
+  const bossCue = getBossCue(options?.threatMood ?? "quiet", Boolean(options?.bossActive), Boolean(options?.bossDefeated));
+  const label = task ? (active?.completed ? `${task.label} complete` : task.label) : "No active order";
+
+  if (!task || !active || active.taskId !== task.id) {
+    return {
+      label,
+      nextAction: bossCue ?? "Free mine and bank cargo",
+      stepStates,
+      isCraftReady,
+      isBankReady,
+      bossCue
+    };
+  }
+
+  if (bossCue && options?.threatMood !== "quiet") {
+    return {
+      label,
+      nextAction: bossCue,
+      stepStates,
+      isCraftReady,
+      isBankReady,
+      bossCue
+    };
+  }
+
+  if (active.completed) {
+    return {
+      label,
+      nextAction: isBankReady ? "Bank completed order" : "Return to extraction",
+      stepStates,
+      isCraftReady,
+      isBankReady,
+      bossCue
+    };
+  }
+
+  if (isCraftReady) {
+    const recipe = task.recipe ? CRAFT_RECIPES[task.recipe] : null;
+    return {
+      label,
+      nextAction: recipe ? `Craft ${recipe.label}` : "Craft objective",
+      stepStates,
+      isCraftReady,
+      isBankReady,
+      bossCue
+    };
+  }
+
+  const nextMissingStep = stepStates.find((step) => !step.complete);
+  return {
+    label,
+    nextAction: nextMissingStep ? actionForStep(nextMissingStep) : "Bank cargo",
+    stepStates,
+    isCraftReady,
+    isBankReady,
+    bossCue
+  };
+}
+
+export function getTaskStepStates(progress: UpgradeState, task: OrgTask): TaskStepState[] {
+  const active = progress.activeTask;
+  if (!active || active.taskId !== task.id) {
+    return [];
+  }
+
+  return task.requirements.map((requirement) => {
+    if (requirement.kind === "collect") {
+      const current = Math.min(active.collected[requirement.ore], requirement.amount);
+      return {
+        label: labelOre(requirement.ore),
+        current,
+        target: requirement.amount,
+        complete: current >= requirement.amount || active.completed,
+        kind: requirement.kind
+      };
+    }
+
+    const recipe = CRAFT_RECIPES[requirement.item];
+    const current = Math.min(active.crafted[requirement.item] ?? 0, requirement.amount);
+    return {
+      label: recipe.label,
+      current,
+      target: requirement.amount,
+      complete: current >= requirement.amount || active.completed,
+      kind: requirement.kind
+    };
+  });
+}
+
 export function canCraftActiveTask(progress: UpgradeState): boolean {
   const task = getActiveTask(progress);
   const active = progress.activeTask;
@@ -347,4 +449,32 @@ function canPay(inventory: InventoryState, costs: Partial<Record<OreId, number>>
 
 function labelOre(ore: OreId): string {
   return ORE_CONFIG[ore].label;
+}
+
+function actionForStep(step: TaskStepState): string {
+  if (step.kind === "craft") {
+    return `Gather materials for ${step.label}`;
+  }
+
+  return step.current > 0 ? `Mine ${step.label}` : `Find ${step.label}`;
+}
+
+function getBossCue(
+  threatMood: "quiet" | "waking" | "surging" | "breakout",
+  bossActive: boolean,
+  bossDefeated: boolean
+): string | null {
+  if (bossDefeated) {
+    return "Voltrix core secured";
+  }
+  if (bossActive || threatMood === "breakout") {
+    return "Fight Voltrix";
+  }
+  if (threatMood === "surging") {
+    return "Voltrix rising";
+  }
+  if (threatMood === "waking") {
+    return "Voltrix stirring";
+  }
+  return null;
 }

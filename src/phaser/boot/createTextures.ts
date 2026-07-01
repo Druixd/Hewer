@@ -3,6 +3,8 @@ import { BLOCK_CONFIG, ENEMY_CONFIG, ORE_CONFIG } from "../../game/content/confi
 import { TEXTURES } from "../../game/assets/manifest";
 import type { BlockId, EnemyId, OreId, TerritoryId } from "../../game/simulation/types";
 
+const TILE_VARIANT_COUNT = 4;
+
 export function createGeneratedTextures(scene: Phaser.Scene): void {
   createTileTextures(scene);
   createPickupTextures(scene);
@@ -17,18 +19,21 @@ function createTileTextures(scene: Phaser.Scene): void {
   const territories: TerritoryId[] = ["shimmerVeins", "cinderHollows"];
   for (const territory of territories) {
     for (const block of keys) {
-      const variants = block === "empty" ? [false] : [false, true];
-      for (const cracked of variants) {
-        const key = TEXTURES.tile(block, territory, cracked);
-        if (scene.textures.exists(key)) {
-          continue;
-        }
+      const crackStates = block === "empty" ? [false] : [false, true];
+      const visualVariants = block === "empty" ? [0] : Array.from({ length: TILE_VARIANT_COUNT }, (_, index) => index);
+      for (const cracked of crackStates) {
+        for (const variant of visualVariants) {
+          const key = TEXTURES.tile(block, territory, cracked, variant);
+          if (scene.textures.exists(key)) {
+            continue;
+          }
 
-        const graphics = scene.make.graphics({ x: 0, y: 0 }, false);
-        graphics.clear();
-        drawTileTexture(graphics, block, territory, cracked);
-        graphics.generateTexture(key, 24, 24);
-        graphics.destroy();
+          const graphics = scene.make.graphics({ x: 0, y: 0 }, false);
+          graphics.clear();
+          drawTileTexture(graphics, block, territory, cracked, variant);
+          graphics.generateTexture(key, 24, 24);
+          graphics.destroy();
+        }
       }
     }
   }
@@ -43,44 +48,82 @@ interface TilePalette {
   dim: number;
 }
 
-function drawTileTexture(graphics: Phaser.GameObjects.Graphics, block: BlockId, territory: TerritoryId, cracked: boolean): void {
+function drawTileTexture(graphics: Phaser.GameObjects.Graphics, block: BlockId, territory: TerritoryId, cracked: boolean, variant: number): void {
   if (block === "empty") {
     return;
   }
 
   const palette = tilePalette(block, territory);
-  drawBlockShell(graphics, palette, block === "ancient" ? 0.82 : 0.62);
+  if (block === "basalt" || block === "ancient") {
+    drawCaveMassTexture(graphics, palette, block === "ancient" ? 0.24 : 0.16, variant);
+    if (block === "ancient") {
+      drawCircuitMark(graphics, palette, 0.2 + variant * 0.035, variant);
+    }
+    if (cracked) {
+      drawCrackedOverlay(graphics, palette, variant);
+    }
+    return;
+  }
 
-  if (block === "basalt") {
-    drawAncientGrid(graphics, palette, territory === "cinderHollows" ? 0.32 : 0.22);
-  } else if (block === "ancient") {
-    drawAncientGrid(graphics, palette, 0.52);
-    drawCircuitMark(graphics, palette);
-  } else if (block === "ferrite") {
-    drawGoldOre(graphics, palette);
+  drawBlockShell(graphics, palette, 0.58, variant);
+
+  if (block === "ferrite") {
+    drawGoldOre(graphics, palette, variant);
   } else if (block === "shimmer") {
-    drawCrystalOre(graphics, palette);
+    drawCrystalOre(graphics, palette, variant);
   } else if (block === "voltaic") {
-    drawVoltaicOre(graphics, palette);
+    drawVoltaicOre(graphics, palette, variant);
   } else if (block === "aetherium") {
-    drawAetheriumOre(graphics, palette);
+    drawAetheriumOre(graphics, palette, variant);
   }
 
-  drawCornerNoise(graphics, palette);
+  drawCornerNoise(graphics, palette, variant);
   if (cracked) {
-    drawCrackedOverlay(graphics, palette);
+    drawCrackedOverlay(graphics, palette, variant);
   }
+}
+
+function drawCaveMassTexture(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, alpha: number, variant: number): void {
+  graphics.fillStyle(palette.core, 1);
+  graphics.fillRect(0, 0, 24, 24);
+  graphics.fillStyle(palette.inner, 0.92);
+  graphics.fillRect(1, 1, 22, 22);
+  graphics.fillStyle(palette.dim, 0.38);
+  graphics.fillCircle(8 + variant * 2, 9 + (variant % 2) * 3, 9 + (variant % 3));
+  graphics.fillCircle(18 - variant, 17 - (variant % 2) * 4, 7 + (variant % 2));
+
+  graphics.lineStyle(1, palette.dim, alpha);
+  graphics.beginPath();
+  graphics.moveTo(2, 6 + variant);
+  graphics.lineTo(8 + variant, 4 + (variant % 2));
+  graphics.lineTo(13 + (variant % 2) * 4, 7 + variant);
+  graphics.moveTo(4 + variant, 18 - (variant % 2) * 3);
+  graphics.lineTo(11, 20 - variant);
+  graphics.lineTo(21 - variant, 14 + (variant % 3));
+  if (variant % 2 === 1) {
+    graphics.moveTo(3, 13);
+    graphics.lineTo(9, 12);
+    graphics.lineTo(14, 15);
+  }
+  graphics.strokePath();
+
+  graphics.fillStyle(palette.edge, alpha * 0.55);
+  graphics.fillCircle(5 + variant, 7 + (variant % 2), 1.8);
+  graphics.fillCircle(18 - (variant % 2) * 3, 17 - variant, 2.2);
+  graphics.fillStyle(palette.hot, alpha * 0.12);
+  graphics.fillRect(7 + variant * 3, 5 + variant, 1, 1);
+  graphics.fillRect(17 - variant, 18 - (variant % 2) * 5, 1, 1);
 }
 
 function tilePalette(block: BlockId, territory: TerritoryId): TilePalette {
   if ((block === "basalt" || block === "ancient") && territory === "cinderHollows") {
     return {
-      core: 0x050202,
-      inner: block === "ancient" ? 0x180506 : 0x0a0303,
-      edge: block === "ancient" ? 0xa72f20 : 0x542019,
+      core: 0x110707,
+      inner: block === "ancient" ? 0x2a0d0c : 0x1a0d0b,
+      edge: block === "ancient" ? 0xc84a32 : 0x7a3428,
       glow: block === "ancient" ? 0xff5a24 : 0x9c2a1f,
       hot: 0xffb24a,
-      dim: 0x2a0d08
+      dim: 0x33130e
     };
   }
 
@@ -88,7 +131,7 @@ function tilePalette(block: BlockId, territory: TerritoryId): TilePalette {
     return { core: 0x050403, inner: 0x12100a, edge: 0x8a6a24, glow: 0xe8c86a, hot: 0xfff0a8, dim: 0x3b2a10 };
   }
   if (block === "shimmer") {
-    return { core: 0x03040a, inner: 0x080c18, edge: 0x335ab8, glow: 0x6ed7ff, hot: 0xe8fbff, dim: 0x142446 };
+    return { core: 0x05030a, inner: 0x10091c, edge: 0x5d429a, glow: 0x8a6db8, hot: 0xe7d8ff, dim: 0x201438 };
   }
   if (block === "voltaic") {
     return { core: 0x020807, inner: 0x061412, edge: 0x298f84, glow: 0x6effe7, hot: 0xe2fff8, dim: 0x0d332e };
@@ -97,140 +140,154 @@ function tilePalette(block: BlockId, territory: TerritoryId): TilePalette {
     return { core: 0x080207, inner: 0x170812, edge: 0x9a3d78, glow: 0xff76c8, hot: 0xffe4f4, dim: 0x3a122a };
   }
   if (block === "ancient") {
-    return { core: 0x030306, inner: 0x090816, edge: 0x5142a0, glow: 0x9a8cff, hot: 0xe8e2ff, dim: 0x171333 };
+    return { core: 0x0d0d18, inner: 0x17162b, edge: 0x6c60bf, glow: 0x9a8cff, hot: 0xe8e2ff, dim: 0x232044 };
   }
 
-  return { core: 0x030304, inner: 0x07070c, edge: 0x322a58, glow: 0x7166b8, hot: 0xb8b0ff, dim: 0x111022 };
+  return { core: 0x0b0e16, inner: 0x151a28, edge: 0x4c5684, glow: 0x8a88d8, hot: 0xd4d2ff, dim: 0x22283c };
 }
 
-function drawBlockShell(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, edgeAlpha: number): void {
-  graphics.fillStyle(0x000000, 1);
+function drawBlockShell(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, edgeAlpha: number, variant: number): void {
+  graphics.fillStyle(palette.core, 0.98);
   graphics.fillRect(0, 0, 24, 24);
-  graphics.fillStyle(palette.inner, 0.94);
-  graphics.fillRect(2, 2, 20, 20);
-  graphics.fillStyle(palette.core, 0.96);
-  graphics.fillRect(5, 5, 14, 14);
-
-  graphics.lineStyle(2, palette.edge, edgeAlpha);
-  graphics.strokeRect(1, 1, 22, 22);
-  graphics.lineStyle(1, palette.glow, edgeAlpha * 0.72);
-  graphics.strokeRect(3.5, 3.5, 17, 17);
-  graphics.fillStyle(palette.glow, 0.16);
-  graphics.fillRect(2, 2, 20, 3);
-  graphics.fillRect(2, 19, 20, 3);
-  graphics.fillRect(2, 2, 3, 20);
-  graphics.fillRect(19, 2, 3, 20);
-}
-
-function drawAncientGrid(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, alpha: number): void {
-  graphics.lineStyle(1, palette.dim, alpha);
-  graphics.lineBetween(6, 2, 6, 22);
-  graphics.lineBetween(12, 2, 12, 22);
-  graphics.lineBetween(18, 2, 18, 22);
-  graphics.lineBetween(2, 6, 22, 6);
-  graphics.lineBetween(2, 12, 22, 12);
-  graphics.lineBetween(2, 18, 22, 18);
-
-  graphics.lineStyle(1, palette.edge, alpha + 0.12);
-  graphics.strokeRect(7.5, 7.5, 9, 9);
-}
-
-function drawCircuitMark(graphics: Phaser.GameObjects.Graphics, palette: TilePalette): void {
-  graphics.lineStyle(1, palette.glow, 0.58);
+  graphics.fillStyle(palette.inner, 0.95);
   graphics.beginPath();
-  graphics.arc(12, 12, 5, Math.PI * 0.1, Math.PI * 1.55, false);
+  graphics.moveTo(1, 5 + (variant % 2));
+  graphics.lineTo(5 + variant, 1);
+  graphics.lineTo(17 + (variant % 2), 1 + (variant % 3));
+  graphics.lineTo(23, 5 + variant);
+  graphics.lineTo(22 - (variant % 2), 17);
+  graphics.lineTo(18 - variant, 23);
+  graphics.lineTo(6, 23 - (variant % 2));
+  graphics.lineTo(1, 19 - variant);
+  graphics.closePath();
+  graphics.fillPath();
+
+  graphics.fillStyle(palette.core, 0.96);
+  graphics.beginPath();
+  graphics.moveTo(5, 8 + (variant % 2));
+  graphics.lineTo(9 + variant, 4);
+  graphics.lineTo(17, 5 + variant);
+  graphics.lineTo(20 - (variant % 2), 10);
+  graphics.lineTo(18, 17 - (variant % 2));
+  graphics.lineTo(13 - variant, 20);
+  graphics.lineTo(7, 18 - variant);
+  graphics.lineTo(4 + (variant % 2), 13);
+  graphics.closePath();
+  graphics.fillPath();
+
+  graphics.lineStyle(1.2, palette.edge, edgeAlpha * 0.52);
+  graphics.beginPath();
+  graphics.moveTo(2, 7);
+  graphics.lineTo(6, 2);
+  graphics.lineTo(16, 2);
+  graphics.lineTo(22, 6);
+  graphics.moveTo(22, 16);
+  graphics.lineTo(17, 22);
+  graphics.lineTo(7, 22);
+  graphics.lineTo(2, 18);
   graphics.strokePath();
-  graphics.strokeRect(9.5, 9.5, 5, 5);
-  graphics.lineBetween(4, 12, 9, 12);
-  graphics.lineBetween(15, 12, 20, 12);
-  graphics.fillStyle(palette.hot, 0.5);
+  graphics.fillStyle(palette.glow, 0.055);
+  graphics.fillCircle(12, 12, 9);
+}
+
+function drawCircuitMark(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, alpha = 0.58, variant = 0): void {
+  graphics.lineStyle(1, palette.glow, alpha);
+  graphics.beginPath();
+  graphics.arc(12, 12, 4.5 + (variant % 2), Math.PI * (0.1 + variant * 0.08), Math.PI * 1.55, false);
+  graphics.strokePath();
+  graphics.strokeRect(9.5 - (variant % 2), 9.5, 5, 5);
+  graphics.lineBetween(4, 12 + (variant % 2), 9, 12);
+  graphics.lineBetween(15, 12, 20, 12 - (variant % 2));
+  graphics.fillStyle(palette.hot, alpha * 0.86);
   graphics.fillRect(11, 11, 2, 2);
 }
 
-function drawGoldOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette): void {
-  graphics.lineStyle(2, palette.glow, 0.82);
+function drawGoldOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant: number): void {
+  const yShift = variant % 2 === 0 ? 0 : -3;
+  graphics.lineStyle(2, palette.glow, 0.9);
   graphics.beginPath();
-  graphics.moveTo(3, 15);
-  graphics.lineTo(8, 12);
-  graphics.lineTo(12, 15);
-  graphics.lineTo(17, 8);
-  graphics.lineTo(22, 10);
+  graphics.moveTo(3, 15 + yShift);
+  graphics.lineTo(8, 12 + variant);
+  graphics.lineTo(12 + (variant % 2) * 2, 15);
+  graphics.lineTo(17, 8 + yShift);
+  graphics.lineTo(22, 10 + variant);
   graphics.strokePath();
-  graphics.fillStyle(palette.glow, 0.58);
-  graphics.fillTriangle(7, 9, 13, 12, 9, 18);
-  graphics.fillTriangle(15, 6, 21, 9, 17, 14);
+  graphics.fillStyle(palette.glow, 0.68);
+  graphics.fillTriangle(7 + variant, 9 + yShift, 13, 12 + variant, 9, 18);
+  graphics.fillTriangle(15, 6 + variant, 21 - variant, 9, 17, 14 + yShift);
   graphics.fillStyle(palette.hot, 0.84);
   graphics.fillRect(10, 13, 2, 2);
   graphics.fillRect(18, 9, 2, 2);
 }
 
-function drawCrystalOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette): void {
-  graphics.lineStyle(1, palette.glow, 0.74);
-  graphics.lineBetween(4, 3, 20, 12);
-  graphics.lineBetween(20, 12, 12, 22);
-  graphics.lineBetween(12, 22, 4, 3);
-  graphics.lineBetween(8, 6, 12, 22);
-  graphics.fillStyle(palette.glow, 0.36);
-  graphics.fillTriangle(10, 7, 17, 12, 12, 18);
+function drawCrystalOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant: number): void {
+  const skew = variant - 1;
+  graphics.lineStyle(1, palette.glow, 0.84);
+  graphics.lineBetween(4 + skew, 3 + variant, 20 - variant, 12);
+  graphics.lineBetween(20 - variant, 12, 12 + skew, 22 - (variant % 2));
+  graphics.lineBetween(12 + skew, 22 - (variant % 2), 4 + skew, 3 + variant);
+  graphics.lineBetween(8 + variant, 6, 12 + skew, 22);
+  graphics.fillStyle(palette.glow, 0.46);
+  graphics.fillTriangle(10 + skew, 7 + variant, 17 - variant, 12, 12, 18);
   graphics.fillStyle(palette.hot, 0.72);
   graphics.fillCircle(13, 12, 1.4);
 }
 
-function drawVoltaicOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette): void {
-  graphics.lineStyle(1.5, palette.glow, 0.82);
+function drawVoltaicOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant: number): void {
+  graphics.lineStyle(1.5, palette.glow, 0.9);
   graphics.beginPath();
-  graphics.moveTo(2, 10);
-  graphics.lineTo(7, 12);
-  graphics.lineTo(13, 8);
-  graphics.lineTo(21, 11);
-  graphics.moveTo(7, 12);
-  graphics.lineTo(9, 21);
+  graphics.moveTo(2, 10 + variant);
+  graphics.lineTo(7 + variant, 12);
+  graphics.lineTo(13, 8 + (variant % 2));
+  graphics.lineTo(21 - variant, 11);
+  graphics.moveTo(7 + variant, 12);
+  graphics.lineTo(9, 21 - variant);
+  graphics.moveTo(13, 8 + (variant % 2));
+  graphics.lineTo(16 + (variant % 2), 2 + variant);
   graphics.moveTo(13, 8);
-  graphics.lineTo(16, 2);
-  graphics.moveTo(13, 8);
-  graphics.lineTo(18, 18);
+  graphics.lineTo(18 - (variant % 2), 18);
   graphics.strokePath();
   graphics.fillStyle(palette.hot, 0.7);
   graphics.fillCircle(12, 10, 1.8);
   graphics.fillCircle(18, 18, 1.2);
 }
 
-function drawAetheriumOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette): void {
-  graphics.lineStyle(1.2, palette.glow, 0.76);
-  graphics.strokeCircle(12, 12, 6);
-  graphics.strokeCircle(7, 8, 2.5);
-  graphics.strokeCircle(17, 16, 3.2);
-  graphics.fillStyle(palette.glow, 0.38);
-  graphics.fillCircle(12, 12, 3);
-  graphics.fillCircle(7, 8, 1.4);
-  graphics.fillCircle(17, 16, 1.8);
+function drawAetheriumOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant: number): void {
+  graphics.lineStyle(1.2, palette.glow, 0.84);
+  graphics.strokeCircle(12, 12, 5.5 + (variant % 2));
+  graphics.strokeCircle(7 + variant, 8, 2.3);
+  graphics.strokeCircle(17 - (variant % 2), 16 - variant, 3.2);
+  graphics.fillStyle(palette.glow, 0.46);
+  graphics.fillCircle(12, 12, 2.8 + (variant % 2) * 0.4);
+  graphics.fillCircle(7 + variant, 8, 1.4);
+  graphics.fillCircle(17 - (variant % 2), 16 - variant, 1.8);
   graphics.fillStyle(palette.hot, 0.68);
   graphics.fillCircle(13, 11, 1);
 }
 
-function drawCornerNoise(graphics: Phaser.GameObjects.Graphics, palette: TilePalette): void {
+function drawCornerNoise(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant: number): void {
   graphics.fillStyle(palette.glow, 0.32);
-  graphics.fillRect(4, 4, 1, 1);
-  graphics.fillRect(19, 5, 1, 1);
-  graphics.fillRect(5, 19, 1, 1);
-  graphics.fillRect(18, 18, 1, 1);
+  graphics.fillRect(4 + variant, 4, 1, 1);
+  graphics.fillRect(19 - variant, 5 + (variant % 2), 1, 1);
+  graphics.fillRect(5, 19 - variant, 1, 1);
+  graphics.fillRect(18 - (variant % 2), 18, 1, 1);
   graphics.fillStyle(palette.dim, 0.42);
-  graphics.fillRect(9, 5, 1, 1);
-  graphics.fillRect(14, 19, 1, 1);
+  graphics.fillRect(9 + variant, 5 + (variant % 2), 1, 1);
+  graphics.fillRect(14 - variant, 19 - (variant % 2), 1, 1);
 }
 
-function drawCrackedOverlay(graphics: Phaser.GameObjects.Graphics, palette: TilePalette): void {
+function drawCrackedOverlay(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant = 0): void {
   graphics.lineStyle(1.5, palette.hot, 0.92);
   graphics.beginPath();
-  graphics.moveTo(3, 4);
-  graphics.lineTo(8, 9);
-  graphics.lineTo(6, 14);
-  graphics.moveTo(8, 9);
-  graphics.lineTo(14, 10);
-  graphics.lineTo(19, 5);
+  graphics.moveTo(3 + variant, 4);
+  graphics.lineTo(8, 9 + variant);
+  graphics.lineTo(6 + (variant % 2), 14);
+  graphics.moveTo(8, 9 + variant);
+  graphics.lineTo(14 + variant, 10);
+  graphics.lineTo(19 - (variant % 2), 5 + variant);
   graphics.moveTo(13, 11);
-  graphics.lineTo(17, 17);
-  graphics.lineTo(21, 20);
+  graphics.lineTo(17 - variant, 17);
+  graphics.lineTo(21, 20 - variant);
   graphics.strokePath();
 
   graphics.lineStyle(1, 0xffffff, 0.35);
