@@ -49,3 +49,7 @@ Author: Nitish
 - [x] Redesign the in-run HUD toward minimal art-first objective/cargo chips, align ore glow colors, and soften breakable tile textures toward underworld cave mass instead of visible grid tiles.
 - [x] Add parallax space-cave layers, brighter tile contrast, deterministic tile variants, readable mission frames, and stronger run-seed cave variation.
 - [x] Remove random parallax glare blobs, brighten cave contrast, add readable wall edge outlines, and reduce player/ore glow washout.
+- [x] Add a first-pass fake lighting and surface relief experiment with player visibility falloff, enemy/pickup glow companions, and procedural tile highlight/shadow cues.
+- [x] Verify the fake lighting pass with TypeScript and a browser smoke screenshot without running a production build.
+- [x] Strengthen the fake lighting pass and fix craft-step guidance so completed ore collection points the player to the extraction workshop instead of boss status.
+- [x] Re-verify the stronger lighting pass with TypeScript and a browser smoke screenshot without running a production build.

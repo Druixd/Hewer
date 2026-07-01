@@ -88,6 +88,7 @@ function drawCaveMassTexture(graphics: Phaser.GameObjects.Graphics, palette: Til
   graphics.fillRect(0, 0, 24, 24);
   graphics.fillStyle(palette.inner, 0.92);
   graphics.fillRect(1, 1, 22, 22);
+  drawReliefFrame(graphics, palette, variant, 0.34);
   graphics.fillStyle(palette.dim, 0.38);
   graphics.fillCircle(8 + variant * 2, 9 + (variant % 2) * 3, 9 + (variant % 3));
   graphics.fillCircle(18 - variant, 17 - (variant % 2) * 4, 7 + (variant % 2));
@@ -188,6 +189,32 @@ function drawBlockShell(graphics: Phaser.GameObjects.Graphics, palette: TilePale
   graphics.strokePath();
   graphics.fillStyle(palette.glow, 0.055);
   graphics.fillCircle(12, 12, 9);
+  drawReliefFrame(graphics, palette, variant, 0.48);
+}
+
+function drawReliefFrame(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant: number, strength: number): void {
+  const offset = variant % 2;
+  graphics.lineStyle(1, palette.hot, strength);
+  graphics.beginPath();
+  graphics.moveTo(2, 5 + offset);
+  graphics.lineTo(6 + variant, 2);
+  graphics.lineTo(15 + offset, 2);
+  graphics.moveTo(3, 9);
+  graphics.lineTo(3, 17 - offset);
+  graphics.strokePath();
+
+  graphics.lineStyle(1, palette.core, strength * 1.45);
+  graphics.beginPath();
+  graphics.moveTo(21, 7 + offset);
+  graphics.lineTo(21, 17);
+  graphics.lineTo(17 - offset, 22);
+  graphics.lineTo(8, 22);
+  graphics.strokePath();
+
+  graphics.fillStyle(0x000000, strength * 0.16);
+  graphics.fillTriangle(17, 7 + offset, 22, 10, 21 - offset, 20);
+  graphics.fillStyle(palette.hot, strength * 0.14);
+  graphics.fillTriangle(3, 5 + offset, 8 + variant, 3, 6, 9 + offset);
 }
 
 function drawCircuitMark(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, alpha = 0.58, variant = 0): void {
@@ -218,6 +245,8 @@ function drawGoldOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette
   graphics.fillStyle(palette.hot, 0.84);
   graphics.fillRect(10, 13, 2, 2);
   graphics.fillRect(18, 9, 2, 2);
+  graphics.lineStyle(1, 0xffffff, 0.24);
+  graphics.lineBetween(8 + variant, 10 + yShift, 12, 12 + variant);
 }
 
 function drawCrystalOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant: number): void {
@@ -231,6 +260,8 @@ function drawCrystalOre(graphics: Phaser.GameObjects.Graphics, palette: TilePale
   graphics.fillTriangle(10 + skew, 7 + variant, 17 - variant, 12, 12, 18);
   graphics.fillStyle(palette.hot, 0.72);
   graphics.fillCircle(13, 12, 1.4);
+  graphics.lineStyle(1, 0xffffff, 0.28);
+  graphics.lineBetween(8 + variant, 6, 13, 11 + (variant % 2));
 }
 
 function drawVoltaicOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant: number): void {
@@ -250,6 +281,8 @@ function drawVoltaicOre(graphics: Phaser.GameObjects.Graphics, palette: TilePale
   graphics.fillStyle(palette.hot, 0.7);
   graphics.fillCircle(12, 10, 1.8);
   graphics.fillCircle(18, 18, 1.2);
+  graphics.lineStyle(1, 0xffffff, 0.22);
+  graphics.lineBetween(8 + variant, 12, 13, 8 + (variant % 2));
 }
 
 function drawAetheriumOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant: number): void {
@@ -263,6 +296,8 @@ function drawAetheriumOre(graphics: Phaser.GameObjects.Graphics, palette: TilePa
   graphics.fillCircle(17 - (variant % 2), 16 - variant, 1.8);
   graphics.fillStyle(palette.hot, 0.68);
   graphics.fillCircle(13, 11, 1);
+  graphics.lineStyle(1, 0xffffff, 0.2);
+  graphics.lineBetween(9 + variant, 8, 13, 11);
 }
 
 function drawCornerNoise(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant: number): void {
@@ -516,6 +551,7 @@ function createFxTextures(scene: Phaser.Scene): void {
   createParticle(scene, TEXTURES.particleMagenta, 0xc47a8a);
   createBombCoreTexture(scene);
   createRadialGlowTexture(scene);
+  createVisibilityVignetteTexture(scene);
 }
 
 function createParticle(scene: Phaser.Scene, key: string, color: number): void {
@@ -572,4 +608,28 @@ function createRadialGlowTexture(scene: Phaser.Scene): void {
     ctx.fillRect(0, 0, size, size);
     canvas.refresh();
   }
+}
+
+function createVisibilityVignetteTexture(scene: Phaser.Scene): void {
+  const key = "fx.visibility.vignette";
+  if (scene.textures.exists(key)) {
+    return;
+  }
+
+  const size = 512;
+  const canvas = scene.textures.createCanvas(key, size, size);
+  if (!canvas) {
+    return;
+  }
+
+  const ctx = canvas.getContext();
+  const center = size / 2;
+  const grad = ctx.createRadialGradient(center, center, size * 0.15, center, center, size * 0.68);
+  grad.addColorStop(0, "rgba(0, 0, 0, 0)");
+  grad.addColorStop(0.34, "rgba(0, 0, 0, 0.04)");
+  grad.addColorStop(0.62, "rgba(0, 0, 0, 0.42)");
+  grad.addColorStop(1, "rgba(0, 0, 0, 0.92)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, size, size);
+  canvas.refresh();
 }

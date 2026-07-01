@@ -41,7 +41,9 @@ export class GameplayScene extends Phaser.Scene {
   private tileSprites: Array<Phaser.GameObjects.Image | null> = [];
   private tileGlows: Array<Phaser.GameObjects.Image[] | null> = [];
   private enemySprites = new Map<string, Phaser.GameObjects.Image>();
+  private enemyGlowSprites = new Map<string, Phaser.GameObjects.Image>();
   private pickupSprites = new Map<string, Phaser.GameObjects.Image>();
+  private pickupGlowSprites = new Map<string, Phaser.GameObjects.Image>();
   private projectileSprites = new Map<string, { core: Phaser.GameObjects.Image; glow: Phaser.GameObjects.Image }>();
   private bombSprites = new Map<string, { core: Phaser.GameObjects.Image; glow: Phaser.GameObjects.Image }>();
   private bossHead: Phaser.GameObjects.Image | null = null;
@@ -57,6 +59,7 @@ export class GameplayScene extends Phaser.Scene {
   private cavernGrid!: Phaser.GameObjects.Graphics;
   private parallaxCaveLayers: Phaser.GameObjects.Graphics[] = [];
   private moodOverlay!: Phaser.GameObjects.Rectangle;
+  private visibilityVignette!: Phaser.GameObjects.Image;
   private extractionGlow!: Phaser.GameObjects.Image;
   private audioFeedback!: GameplayAudio;
   private wasRightDown = false;
@@ -93,7 +96,9 @@ export class GameplayScene extends Phaser.Scene {
     this.tileSprites = [];
     this.tileGlows = [];
     this.enemySprites.clear();
+    this.enemyGlowSprites.clear();
     this.pickupSprites.clear();
+    this.pickupGlowSprites.clear();
     this.projectileSprites.clear();
     this.bombSprites.clear();
     this.bossHead = null;
@@ -244,16 +249,16 @@ export class GameplayScene extends Phaser.Scene {
         const bgGlow = this.add.image(x, y, "fx.glow.radial")
           .setDepth(0)
           .setOrigin(0.5)
-          .setScale(0.95)
-          .setAlpha(0.055)
+          .setScale(1.35)
+          .setAlpha(0.13)
           .setTint(glowColor)
           .setBlendMode(Phaser.BlendModes.ADD);
         
         const coreGlow = this.add.image(x, y, "fx.glow.radial")
           .setDepth(3)
           .setOrigin(0.5)
-          .setScale(0.4)
-          .setAlpha(0.15)
+          .setScale(0.58)
+          .setAlpha(0.28)
           .setTint(glowColor)
           .setBlendMode(Phaser.BlendModes.ADD);
 
@@ -372,8 +377,15 @@ export class GameplayScene extends Phaser.Scene {
       .setOrigin(0)
       .setScrollFactor(0);
     this.moodOverlay.setSize(this.scale.width, this.scale.height);
+    this.visibilityVignette = this.add.image(this.scale.width / 2, this.scale.height / 2, "fx.visibility.vignette")
+      .setDepth(18)
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setAlpha(0.9);
+    this.fitVisibilityVignette(this.scale.width, this.scale.height);
     this.scale.on("resize", (gameSize: Phaser.Structs.Size) => {
       this.moodOverlay.setSize(gameSize.width, gameSize.height);
+      this.fitVisibilityVignette(gameSize.width, gameSize.height);
     });
     this.extractionGlow = this.add.image(this.state.world.extraction.x, this.state.world.extraction.y, "fx.glow.radial")
       .setDepth(6)
@@ -385,8 +397,8 @@ export class GameplayScene extends Phaser.Scene {
     this.playerLight = this.add.image(this.state.player.x, this.state.player.y, "fx.glow.radial")
       .setDepth(5)
       .setOrigin(0.5)
-      .setScale(3.2)
-      .setAlpha(0.2)
+      .setScale(4.1)
+      .setAlpha(0.34)
       .setTint(0xc4a86e)
       .setBlendMode(Phaser.BlendModes.ADD);
     this.reticle = this.add.image(this.state.player.x, this.state.player.y, TEXTURES.reticle).setDepth(20).setBlendMode(Phaser.BlendModes.ADD);
@@ -430,6 +442,7 @@ export class GameplayScene extends Phaser.Scene {
     if (this.hazardGraphics) this.minimap.ignore(this.hazardGraphics);
     if (this.objectiveGraphics) this.minimap.ignore(this.objectiveGraphics);
     if (this.moodOverlay) this.minimap.ignore(this.moodOverlay);
+    if (this.visibilityVignette) this.minimap.ignore(this.visibilityVignette);
     if (this.extractionGlow) this.minimap.ignore(this.extractionGlow);
     if (this.playerLight) this.minimap.ignore(this.playerLight);
     if (this.reticle) this.minimap.ignore(this.reticle);
@@ -490,6 +503,15 @@ export class GameplayScene extends Phaser.Scene {
     hud.setPaused(false);
   }
 
+  private fitVisibilityVignette(width: number, height: number): void {
+    if (!this.visibilityVignette) {
+      return;
+    }
+
+    this.visibilityVignette.setPosition(width / 2, height / 2);
+    this.visibilityVignette.setDisplaySize(width * 1.18, height * 1.18);
+  }
+
   private collectActions(): InputActions {
     const actions = createEmptyActions();
     const pointer = this.input.activePointer;
@@ -544,15 +566,17 @@ export class GameplayScene extends Phaser.Scene {
     this.ship.setScale(player.collectionPulse > 0 ? 1.08 : 1);
     this.ship.setAlpha(player.invulnerableTimer > 0 ? 0.72 : 1);
     this.playerLight.setPosition(player.x, player.y);
-    this.playerLight.setScale(player.invulnerableTimer > 0 ? 3.8 : 3.2);
-    this.playerLight.setAlpha(player.invulnerableTimer > 0 ? 0.3 : 0.2);
+    const speed = Math.hypot(player.vx, player.vy);
+    const movementGlow = Phaser.Math.Clamp(speed / 520, 0, 0.22);
+    const lightPulse = Math.sin(this.state.elapsed * 3.2) * 0.025;
+    this.playerLight.setScale((player.invulnerableTimer > 0 ? 4.8 : 4.1) + movementGlow);
+    this.playerLight.setAlpha((player.invulnerableTimer > 0 ? 0.46 : 0.34) + movementGlow * 0.36 + lightPulse);
     this.reticle.setPosition(this.input.activePointer.worldX, this.input.activePointer.worldY);
     const extractionDistance = Math.hypot(player.x - this.state.world.extraction.x, player.y - this.state.world.extraction.y);
     const extractionPulse = extractionDistance <= 96 ? 0.48 : 0.22 + Math.sin(this.state.elapsed * 2.4) * 0.06;
     this.extractionGlow.setAlpha(extractionPulse);
     this.extractionGlow.setScale(extractionDistance <= 96 ? 1.75 : 1.35);
 
-    const speed = Math.hypot(player.vx, player.vy);
     if (speed > 35 && this.time.now - this.lastTrailTime > 24) {
       this.lastTrailTime = this.time.now;
       this.spawnPlayerTrailLine(player.x, player.y, player.vx, player.vy, speed);
@@ -625,12 +649,26 @@ export class GameplayScene extends Phaser.Scene {
     for (const enemy of this.state.enemies) {
       live.add(enemy.id);
       let sprite = this.enemySprites.get(enemy.id);
+      let glow = this.enemyGlowSprites.get(enemy.id);
       if (!sprite) {
+        glow = this.add.image(enemy.x, enemy.y, "fx.glow.radial")
+          .setDepth(10)
+          .setTint(enemyGlowColor(enemy.kind))
+          .setScale(enemy.kind === "arcWarden" ? 1.15 : 0.84)
+          .setAlpha(0.32)
+          .setBlendMode(Phaser.BlendModes.ADD);
         sprite = this.add.image(enemy.x, enemy.y, TEXTURES.enemy(enemy.kind)).setDepth(12);
         this.enemySprites.set(enemy.id, sprite);
+        this.enemyGlowSprites.set(enemy.id, glow);
+        this.minimap?.ignore(glow);
         this.minimap?.ignore(sprite); // Ignore enemies on minimap to keep it clean
       }
 
+      const activePulse = enemy.state === "pulsing" || enemy.state === "windup" ? 0.12 : 0;
+      const glowPulse = Math.sin(this.state.elapsed * 5 + enemy.timer) * 0.04;
+      glow?.setPosition(enemy.x, enemy.y);
+      glow?.setScale((enemy.kind === "arcWarden" ? 1.18 : 0.86) + activePulse);
+      glow?.setAlpha(0.28 + activePulse + glowPulse);
       sprite.setPosition(enemy.x, enemy.y);
       sprite.setRotation(enemy.kind === "prismStalker" ? Math.atan2(enemy.vy, enemy.vx) : enemy.timer);
       sprite.setAlpha(enemy.state === "windup" ? 0.72 : 1);
@@ -640,7 +678,9 @@ export class GameplayScene extends Phaser.Scene {
     for (const [id, sprite] of this.enemySprites) {
       if (!live.has(id)) {
         sprite.destroy();
+        this.enemyGlowSprites.get(id)?.destroy();
         this.enemySprites.delete(id);
+        this.enemyGlowSprites.delete(id);
       }
     }
   }
@@ -650,12 +690,25 @@ export class GameplayScene extends Phaser.Scene {
     for (const pickup of this.state.pickups) {
       live.add(pickup.id);
       let sprite = this.pickupSprites.get(pickup.id);
+      let glow = this.pickupGlowSprites.get(pickup.id);
       if (!sprite) {
+        glow = this.add.image(pickup.x, pickup.y, "fx.glow.radial")
+          .setDepth(9)
+          .setTint(oreGlowForPickup(pickup.ore))
+          .setScale(0.54)
+          .setAlpha(0.32)
+          .setBlendMode(Phaser.BlendModes.ADD);
         sprite = this.add.image(pickup.x, pickup.y, TEXTURES.pickup(pickup.ore)).setDepth(11);
         this.pickupSprites.set(pickup.id, sprite);
+        this.pickupGlowSprites.set(pickup.id, glow);
+        this.minimap?.ignore(glow);
         this.minimap?.ignore(sprite); // Ignore pickups on minimap to keep it clean
       }
 
+      const pickupPulse = pickup.magnetized ? 0.16 : Math.sin(this.state.elapsed * 5 + pickup.age) * 0.03;
+      glow?.setPosition(pickup.x, pickup.y);
+      glow?.setScale(pickup.magnetized ? 0.78 : 0.56);
+      glow?.setAlpha(0.3 + pickupPulse);
       sprite.setPosition(pickup.x, pickup.y);
       sprite.setRotation(pickup.age * 4);
       sprite.setScale(pickup.magnetized ? 1.1 : 0.92);
@@ -664,7 +717,9 @@ export class GameplayScene extends Phaser.Scene {
     for (const [id, sprite] of this.pickupSprites) {
       if (!live.has(id)) {
         sprite.destroy();
+        this.pickupGlowSprites.get(id)?.destroy();
         this.pickupSprites.delete(id);
+        this.pickupGlowSprites.delete(id);
       }
     }
   }
@@ -1351,6 +1406,29 @@ function oreGlowForTile(block: BlockId): number | null {
     return 0xc47a8a;
   }
   return null;
+}
+
+function oreGlowForPickup(ore: string): number {
+  if (ore === "ferrite") {
+    return 0xc4a86e;
+  }
+  if (ore === "shimmer") {
+    return 0x8a6db8;
+  }
+  if (ore === "voltaic") {
+    return 0x5ab8a8;
+  }
+  return 0xc47a8a;
+}
+
+function enemyGlowColor(kind: string): number {
+  if (kind === "sparkSac") {
+    return 0xd4845a;
+  }
+  if (kind === "prismStalker") {
+    return 0xc47a8a;
+  }
+  return 0x5ab8a8;
 }
 
 function tileVisualVariant(seed: string, tileX: number, tileY: number, block: BlockId, cracked: boolean): number {

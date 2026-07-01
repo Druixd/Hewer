@@ -155,6 +155,8 @@ The visual target is not a generic dashboard. The HUD should feel like functiona
 
 The cave should not read as fully visible at all times. Keep the far environment dark, use local visibility around the player, and make important ores, enemies, bombs, and hazards read through additive emission-style glow. Avoid relying on sprite opacity as the primary lighting language.
 
+Lighting should fake depth before attempting expensive true normal-map rendering. The first lighting pass uses a player-centered visibility falloff, additive light blooms from pickups/enemies/projectiles/bombs/objective cues, and procedural tile relief: top-left rim highlights, bottom-right contact shadows, mineral facet highlights, and cracked-tile hot edges. This should make flat generated tiles feel slightly raised and light-reactive while preserving Phaser sprite performance and playfield readability. Real shader normal maps remain later scope only if the cheaper visual language is not enough.
+
 Player movement trails should read as clean velocity-aligned energy streaks, not smoke or expanding bubble particles. The trail should stay thin, readable, and attached to ship motion so it supports speed feedback without covering cave detail.
 
 Terrain tiles should move toward the generated dark sci-fi tileset direction: compact black-core blocks with luminous material edges, readable destructible damage, and distinct ore identities. Shimmer Veins terrain uses purple-blue ancient/cave blocks, cyan crystal fractures, electric voltaic seams, warm gold ferrite veins, and magenta organic aetherium hazards. Early Cinder Hollows terrain can reuse the same block IDs with red-orange cinder shell styling for basalt and ancient blocks until full Cinder-specific resources exist.

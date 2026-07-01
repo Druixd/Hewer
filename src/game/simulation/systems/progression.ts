@@ -343,7 +343,8 @@ export function getTaskGuidance(progress: UpgradeState, task: OrgTask | null, op
   const active = progress.activeTask;
   const stepStates = task && active?.taskId === task.id ? getTaskStepStates(progress, task) : [];
   const isCraftReady = canCraftActiveTask(progress);
-  const isBankReady = (options?.distanceToExtraction ?? Number.POSITIVE_INFINITY) <= 72 && (options?.cargoValue ?? 0) > 0;
+  const isAtExtraction = (options?.distanceToExtraction ?? Number.POSITIVE_INFINITY) <= 72;
+  const isBankReady = isAtExtraction && (options?.cargoValue ?? 0) > 0;
   const bossCue = getBossCue(options?.threatMood ?? "quiet", Boolean(options?.bossActive), Boolean(options?.bossDefeated));
   const label = task ? (active?.completed ? `${task.label} complete` : task.label) : "No active order";
 
@@ -358,7 +359,7 @@ export function getTaskGuidance(progress: UpgradeState, task: OrgTask | null, op
     };
   }
 
-  if (bossCue && options?.threatMood !== "quiet") {
+  if (bossCue && (options?.bossActive || options?.threatMood === "breakout" || options?.threatMood === "surging")) {
     return {
       label,
       nextAction: bossCue,
@@ -384,7 +385,11 @@ export function getTaskGuidance(progress: UpgradeState, task: OrgTask | null, op
     const recipe = task.recipe ? CRAFT_RECIPES[task.recipe] : null;
     return {
       label,
-      nextAction: recipe ? `Craft ${recipe.label}` : "Craft objective",
+      nextAction: isAtExtraction
+        ? "Press E for workshop"
+        : recipe
+          ? `Extract to craft ${recipe.label}`
+          : "Extract to craft objective",
       stepStates,
       isCraftReady,
       isBankReady,
@@ -465,7 +470,7 @@ function getBossCue(
   bossDefeated: boolean
 ): string | null {
   if (bossDefeated) {
-    return "Voltrix core secured";
+    return null;
   }
   if (bossActive || threatMood === "breakout") {
     return "Fight Voltrix";
