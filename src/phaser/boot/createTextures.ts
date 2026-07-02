@@ -55,12 +55,12 @@ function drawTileTexture(graphics: Phaser.GameObjects.Graphics, block: BlockId, 
 
   const palette = tilePalette(block, territory);
   if (block === "basalt" || block === "ancient") {
-    drawCaveMassTexture(graphics, palette, block === "ancient" ? 0.24 : 0.16, variant);
+    drawCaveMassTexture(graphics, palette, block === "ancient" ? 0.08 : 0.06, variant);
     if (block === "ancient") {
-      drawCircuitMark(graphics, palette, 0.2 + variant * 0.035, variant);
+      drawCircuitMark(graphics, palette, 0.06 + variant * 0.01, variant);
     }
     if (cracked) {
-      drawCrackedOverlay(graphics, palette, variant);
+      drawCrackedOverlay(graphics, palette, variant, 0.32);
     }
     return;
   }
@@ -86,34 +86,32 @@ function drawTileTexture(graphics: Phaser.GameObjects.Graphics, block: BlockId, 
 function drawCaveMassTexture(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, alpha: number, variant: number): void {
   graphics.fillStyle(palette.core, 1);
   graphics.fillRect(0, 0, 24, 24);
-  graphics.fillStyle(palette.inner, 0.92);
-  graphics.fillRect(1, 1, 22, 22);
-  drawReliefFrame(graphics, palette, variant, 0.34);
-  graphics.fillStyle(palette.dim, 0.38);
-  graphics.fillCircle(8 + variant * 2, 9 + (variant % 2) * 3, 9 + (variant % 3));
-  graphics.fillCircle(18 - variant, 17 - (variant % 2) * 4, 7 + (variant % 2));
+  graphics.fillStyle(palette.inner, 0.46);
+  graphics.fillRect(0, 0, 24, 24);
+  graphics.fillStyle(palette.dim, 0.075);
+  graphics.fillCircle(7 + variant * 2, 8 + (variant % 2) * 3, 8 + (variant % 3));
+  graphics.fillCircle(19 - variant, 17 - (variant % 2) * 4, 6 + (variant % 2));
+  graphics.fillStyle(palette.core, 0.09);
+  graphics.fillCircle(14 - variant, 10 + variant, 9);
 
   graphics.lineStyle(1, palette.dim, alpha);
   graphics.beginPath();
-  graphics.moveTo(2, 6 + variant);
-  graphics.lineTo(8 + variant, 4 + (variant % 2));
-  graphics.lineTo(13 + (variant % 2) * 4, 7 + variant);
-  graphics.moveTo(4 + variant, 18 - (variant % 2) * 3);
-  graphics.lineTo(11, 20 - variant);
-  graphics.lineTo(21 - variant, 14 + (variant % 3));
+  graphics.moveTo(-2, 7 + variant);
+  graphics.lineTo(8 + variant, 5 + (variant % 2));
+  graphics.lineTo(17 + (variant % 2) * 4, 8 + variant);
+  graphics.moveTo(3 + variant, 19 - (variant % 2) * 3);
+  graphics.lineTo(12, 21 - variant);
+  graphics.lineTo(26 - variant, 15 + (variant % 3));
   if (variant % 2 === 1) {
-    graphics.moveTo(3, 13);
+    graphics.moveTo(-1, 13);
     graphics.lineTo(9, 12);
-    graphics.lineTo(14, 15);
+    graphics.lineTo(18, 15);
   }
   graphics.strokePath();
 
-  graphics.fillStyle(palette.edge, alpha * 0.55);
-  graphics.fillCircle(5 + variant, 7 + (variant % 2), 1.8);
-  graphics.fillCircle(18 - (variant % 2) * 3, 17 - variant, 2.2);
-  graphics.fillStyle(palette.hot, alpha * 0.12);
-  graphics.fillRect(7 + variant * 3, 5 + variant, 1, 1);
-  graphics.fillRect(17 - variant, 18 - (variant % 2) * 5, 1, 1);
+  graphics.fillStyle(palette.edge, alpha * 0.08);
+  graphics.fillCircle(6 + variant, 8 + (variant % 2), 1.4);
+  graphics.fillCircle(18 - (variant % 2) * 3, 17 - variant, 1.5);
 }
 
 function tilePalette(block: BlockId, territory: TerritoryId): TilePalette {
@@ -311,8 +309,8 @@ function drawCornerNoise(graphics: Phaser.GameObjects.Graphics, palette: TilePal
   graphics.fillRect(14 - variant, 19 - (variant % 2), 1, 1);
 }
 
-function drawCrackedOverlay(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant = 0): void {
-  graphics.lineStyle(1.5, palette.hot, 0.92);
+function drawCrackedOverlay(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant = 0, alpha = 0.92): void {
+  graphics.lineStyle(1.5, palette.hot, alpha);
   graphics.beginPath();
   graphics.moveTo(3 + variant, 4);
   graphics.lineTo(8, 9 + variant);
@@ -325,7 +323,7 @@ function drawCrackedOverlay(graphics: Phaser.GameObjects.Graphics, palette: Tile
   graphics.lineTo(21, 20 - variant);
   graphics.strokePath();
 
-  graphics.lineStyle(1, 0xffffff, 0.35);
+  graphics.lineStyle(1, 0xffffff, alpha * 0.38);
   graphics.lineBetween(8, 9, 14, 10);
 }
 
