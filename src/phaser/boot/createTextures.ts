@@ -414,6 +414,25 @@ function createEnemyTextures(scene: Phaser.Scene): void {
       
       graphics.fillStyle(color, 0.85);
       graphics.fillCircle(24, 24, 4);
+    } else if (enemy === "phaseMite") {
+      graphics.fillStyle(0x161006, 0.88);
+      graphics.beginPath();
+      graphics.moveTo(24, 5);
+      graphics.lineTo(40, 18);
+      graphics.lineTo(35, 40);
+      graphics.lineTo(13, 40);
+      graphics.lineTo(8, 18);
+      graphics.closePath();
+      graphics.fillPath();
+      graphics.lineStyle(2, color, 0.95);
+      graphics.strokePath();
+      graphics.lineStyle(1, 0xf0e4cc, 0.72);
+      graphics.lineBetween(24, 8, 24, 39);
+      graphics.lineBetween(11, 20, 37, 20);
+      graphics.fillStyle(0xe8c86a, 0.95);
+      graphics.fillCircle(24, 24, 5);
+      graphics.fillStyle(0xffffff, 0.85);
+      graphics.fillCircle(22, 22, 1.4);
     } else {
       // Arc Warden cyan area controller
       graphics.fillStyle(0x0a1614, 0.85);
@@ -622,11 +641,12 @@ function createVisibilityVignetteTexture(scene: Phaser.Scene): void {
 
   const ctx = canvas.getContext();
   const center = size / 2;
-  const grad = ctx.createRadialGradient(center, center, size * 0.15, center, center, size * 0.68);
+  const grad = ctx.createRadialGradient(center, center, size * 0.1, center, center, size * 0.72);
   grad.addColorStop(0, "rgba(0, 0, 0, 0)");
-  grad.addColorStop(0.34, "rgba(0, 0, 0, 0.04)");
-  grad.addColorStop(0.62, "rgba(0, 0, 0, 0.42)");
-  grad.addColorStop(1, "rgba(0, 0, 0, 0.92)");
+  grad.addColorStop(0.28, "rgba(0, 0, 0, 0.06)");
+  grad.addColorStop(0.55, "rgba(0, 0, 0, 0.5)");
+  grad.addColorStop(0.78, "rgba(0, 0, 0, 0.82)");
+  grad.addColorStop(1, "rgba(0, 0, 0, 0.98)");
   ctx.fillStyle = grad;
   ctx.fillRect(0, 0, size, size);
   canvas.refresh();

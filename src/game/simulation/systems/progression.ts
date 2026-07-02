@@ -5,8 +5,11 @@ import {
   ORE_CONFIG,
   ORG_TASKS,
   TERRITORY_CONFIG,
+  UNLOCK_CONFIG,
   UPGRADE_CONFIG,
-  upgradeCost
+  WEAPON_CONFIG,
+  upgradeCost,
+  upgradeMaterialCost
 } from "../../content/config";
 import type {
   ActiveTaskState,
@@ -21,7 +24,9 @@ import type {
   TaskStepState,
   TerritoryId,
   UpgradeId,
-  UpgradeState
+  UpgradeState,
+  UnlockId,
+  WeaponId
 } from "../types";
 
 const STORAGE_KEY = "hewer.progress.v0";
@@ -38,6 +43,7 @@ function emptyInventory(): InventoryState {
 export function createDefaultProgress(): UpgradeState {
   return {
     credits: 0,
+    stockpile: emptyInventory(),
     laserPower: 0,
     heatSink: 0,
     magnetRadius: 0,
@@ -52,7 +58,10 @@ export function createDefaultProgress(): UpgradeState {
     activeTask: null,
     completedTasks: [],
     craftedItems: {},
-    bossAchievements: []
+    bossAchievements: [],
+    unlockedShopItems: ["dashModule", "shieldEmitter", "swarmBlast"],
+    purchasedUnlocks: [],
+    equippedWeapon: "drillShot"
   };
 }
 
@@ -89,11 +98,18 @@ export function normalizeProgress(progress: Partial<UpgradeState>): UpgradeState
     ...fallback,
     ...progress,
     selectedTerritory,
+    stockpile: {
+      ...emptyInventory(),
+      ...progress.stockpile
+    },
     unlockedTerritories: Array.from(new Set(safeUnlockedTerritories)),
     activeTask: normalizeActiveTask(progress.activeTask ?? null),
     completedTasks: Array.from(new Set(progress.completedTasks ?? [])),
     craftedItems: progress.craftedItems ?? {},
-    bossAchievements: Array.from(new Set(progress.bossAchievements ?? []))
+    bossAchievements: Array.from(new Set((progress.bossAchievements ?? []).filter((achievement): achievement is BossAchievementId => achievement in BOSS_ACHIEVEMENTS))),
+    unlockedShopItems: normalizeUnlocks(progress.unlockedShopItems, fallback.unlockedShopItems),
+    purchasedUnlocks: normalizeUnlocks(progress.purchasedUnlocks, []),
+    equippedWeapon: normalizeWeapon(progress.equippedWeapon, progress.purchasedUnlocks)
   };
 }
 
@@ -113,8 +129,24 @@ function normalizeActiveTask(task: ActiveTaskState | null): ActiveTaskState | nu
       ...task.materials
     },
     crafted: task.crafted ?? {},
+    banked: Boolean(task.banked),
+    bossDefeated: Boolean(task.bossDefeated),
+    extracted: Boolean(task.extracted),
     completed: Boolean(task.completed)
   };
+}
+
+function normalizeUnlocks(value: UnlockId[] | undefined, fallback: UnlockId[]): UnlockId[] {
+  const ids = value?.length ? value : fallback;
+  return Array.from(new Set(ids.filter((id): id is UnlockId => id in UNLOCK_CONFIG)));
+}
+
+function normalizeWeapon(value: WeaponId | undefined, purchasedUnlocks: UnlockId[] | undefined): WeaponId {
+  if (!value || !(value in WEAPON_CONFIG)) {
+    return "drillShot";
+  }
+  const unlock = WEAPON_CONFIG[value].unlock;
+  return !unlock || purchasedUnlocks?.includes(unlock) ? value : "drillShot";
 }
 
 export function effectiveStats(upgrades: UpgradeState): EffectiveStats {
@@ -143,10 +175,23 @@ export function calculateRunValue(result: Pick<RunResult, "inventory" | "voltrix
 
 export function bankRunResult(progress: UpgradeState, result: RunResult): UpgradeState {
   const next = ensureActiveTask(normalizeProgress(progress));
-  next.credits += result.creditsEarned;
-  next.totalRuns += 1;
-  next.totalMined += result.minedBlocks;
-  next.voltrixCores += result.voltrixCore ? 1 : 0;
+  if (result.outcome !== "destroyed") {
+    next.credits += result.creditsEarned;
+    addInventory(next.stockpile, result.inventory);
+  }
+  if (result.mode === "run-end") {
+    next.totalRuns += 1;
+    next.totalMined += result.minedBlocks;
+    next.voltrixCores += result.voltrixCore ? 1 : 0;
+  }
+  if (next.activeTask && next.activeTask.taskId === result.activeTaskId && result.outcome !== "destroyed") {
+    next.activeTask.banked = true;
+    next.activeTask.extracted = true;
+    const task = getOrgTask(next.activeTask.taskId);
+    if (task && isTaskComplete(next, task)) {
+      completeTask(next, task);
+    }
+  }
   saveProgress(next);
   return next;
 }
@@ -159,17 +204,67 @@ export function tryBuyUpgrade(progress: UpgradeState, id: UpgradeId): UpgradeSta
   }
 
   const cost = upgradeCost(id, level);
-  if (progress.credits < cost) {
+  const materialCost = upgradeMaterialCost(id, level);
+  if (progress.credits < cost || !canPay(progress.stockpile, materialCost)) {
     return progress;
   }
 
   const next = {
     ...progress,
+    stockpile: { ...progress.stockpile },
     credits: progress.credits - cost,
     [id]: level + 1
   };
+  payInventory(next.stockpile, materialCost);
   saveProgress(next);
   return next;
+}
+
+export function canBuyUnlock(progress: UpgradeState, id: UnlockId): boolean {
+  const next = normalizeProgress(progress);
+  const config = UNLOCK_CONFIG[id];
+  if (!config || next.purchasedUnlocks.includes(id) || !next.unlockedShopItems.includes(id)) {
+    return false;
+  }
+  if (config.requiresTask && !next.completedTasks.includes(config.requiresTask)) {
+    return false;
+  }
+  return next.credits >= config.cost;
+}
+
+export function tryBuyUnlock(progress: UpgradeState, id: UnlockId): UpgradeState {
+  const next = normalizeProgress(progress);
+  if (!canBuyUnlock(next, id)) {
+    return next;
+  }
+
+  next.credits -= UNLOCK_CONFIG[id].cost;
+  next.purchasedUnlocks = Array.from(new Set([...next.purchasedUnlocks, id]));
+  if (id === "piercerWeapon") {
+    next.equippedWeapon = "piercer";
+  } else if (id === "scatterWeapon") {
+    next.equippedWeapon = "scatter";
+  }
+  saveProgress(next);
+  return next;
+}
+
+export function tryEquipWeapon(progress: UpgradeState, id: WeaponId): UpgradeState {
+  const next = normalizeProgress(progress);
+  const config = WEAPON_CONFIG[id];
+  if (!config) {
+    return next;
+  }
+  if (config.unlock && !next.purchasedUnlocks.includes(config.unlock)) {
+    return next;
+  }
+  next.equippedWeapon = id;
+  saveProgress(next);
+  return next;
+}
+
+export function hasUnlock(progress: UpgradeState, id: UnlockId): boolean {
+  return progress.purchasedUnlocks.includes(id);
 }
 
 export function ensureActiveTask(progress: UpgradeState): UpgradeState {
@@ -196,6 +291,9 @@ export function ensureActiveTask(progress: UpgradeState): UpgradeState {
     collected: emptyInventory(),
     materials: emptyInventory(),
     crafted: {},
+    banked: false,
+    bossDefeated: false,
+    extracted: false,
     completed: false
   };
   next.selectedTerritory = task.territory;
@@ -280,13 +378,16 @@ export function isTaskComplete(progress: UpgradeState, task: OrgTask): boolean {
     return false;
   }
 
-  return task.requirements.every((requirement) => {
+  const requirementsDone = task.requirements.every((requirement) => {
     if (requirement.kind === "collect") {
       return active.collected[requirement.ore] >= requirement.amount || active.completed;
     }
 
     return (active.crafted[requirement.item] ?? 0) >= requirement.amount;
   });
+
+  const bossDone = !task.bossAchievement || active.bossDefeated || progress.bossAchievements.includes(task.bossAchievement);
+  return requirementsDone && active.banked && active.extracted && bossDone;
 }
 
 function completeTask(progress: UpgradeState, task: OrgTask): void {
@@ -296,6 +397,10 @@ function completeTask(progress: UpgradeState, task: OrgTask): void {
 
   if (task.unlocksTerritory && !progress.unlockedTerritories.includes(task.unlocksTerritory)) {
     progress.unlockedTerritories.push(task.unlocksTerritory);
+  }
+
+  if (task.unlocks) {
+    progress.unlockedShopItems = Array.from(new Set([...progress.unlockedShopItems, ...task.unlocks]));
   }
 
   if (progress.activeTask?.taskId === task.id) {
@@ -310,6 +415,15 @@ export function recordBossAchievement(progress: UpgradeState, achievement: BossA
 
   if (!progress.bossAchievements.includes(achievement)) {
     progress.bossAchievements.push(achievement);
+  }
+
+  const task = getActiveTask(progress);
+  const active = progress.activeTask;
+  if (task?.bossAchievement === achievement && active?.taskId === task.id) {
+    active.bossDefeated = true;
+    if (isTaskComplete(progress, task)) {
+      completeTask(progress, task);
+    }
   }
 }
 
@@ -335,7 +449,6 @@ export function getTaskRequirementProgress(progress: UpgradeState, task: OrgTask
 
 export function getTaskGuidance(progress: UpgradeState, task: OrgTask | null, options?: {
   cargoValue?: number;
-  distanceToExtraction?: number;
   threatMood?: "quiet" | "waking" | "surging" | "breakout";
   bossActive?: boolean;
   bossDefeated?: boolean;
@@ -343,15 +456,15 @@ export function getTaskGuidance(progress: UpgradeState, task: OrgTask | null, op
   const active = progress.activeTask;
   const stepStates = task && active?.taskId === task.id ? getTaskStepStates(progress, task) : [];
   const isCraftReady = canCraftActiveTask(progress);
-  const isAtExtraction = (options?.distanceToExtraction ?? Number.POSITIVE_INFINITY) <= 72;
-  const isBankReady = isAtExtraction && (options?.cargoValue ?? 0) > 0;
+  const isStoreReady = (options?.cargoValue ?? 0) > 0;
+  const isBankReady = isStoreReady;
   const bossCue = getBossCue(options?.threatMood ?? "quiet", Boolean(options?.bossActive), Boolean(options?.bossDefeated));
   const label = task ? (active?.completed ? `${task.label} complete` : task.label) : "No active order";
 
   if (!task || !active || active.taskId !== task.id) {
     return {
       label,
-      nextAction: bossCue ?? "Free mine and bank cargo",
+      nextAction: bossCue ?? "Free mine and store cargo",
       stepStates,
       isCraftReady,
       isBankReady,
@@ -373,7 +486,22 @@ export function getTaskGuidance(progress: UpgradeState, task: OrgTask | null, op
   if (active.completed) {
     return {
       label,
-      nextAction: isBankReady ? "Bank completed order" : "Return to extraction",
+      nextAction: isBankReady ? "Store completed order" : "Call Store when ready",
+      stepStates,
+      isCraftReady,
+      isBankReady,
+      bossCue
+    };
+  }
+
+  const collectedRequiredOre = task.requirements.every((requirement) => {
+    return requirement.kind !== "collect" || active.collected[requirement.ore] >= requirement.amount || active.completed;
+  });
+
+  if (!active.banked && collectedRequiredOre) {
+    return {
+      label,
+      nextAction: "Press E to store contract cargo",
       stepStates,
       isCraftReady,
       isBankReady,
@@ -385,11 +513,18 @@ export function getTaskGuidance(progress: UpgradeState, task: OrgTask | null, op
     const recipe = task.recipe ? CRAFT_RECIPES[task.recipe] : null;
     return {
       label,
-      nextAction: isAtExtraction
-        ? "Press E for workshop"
-        : recipe
-          ? `Extract to craft ${recipe.label}`
-          : "Extract to craft objective",
+      nextAction: recipe ? `Store to craft ${recipe.label}` : "Store to craft objective",
+      stepStates,
+      isCraftReady,
+      isBankReady,
+      bossCue
+    };
+  }
+
+  if (task.bossAchievement && !active.bossDefeated && !progress.bossAchievements.includes(task.bossAchievement)) {
+    return {
+      label,
+      nextAction: options?.bossActive ? "Defeat contract boss" : "Mine deeper to wake contract boss",
       stepStates,
       isCraftReady,
       isBankReady,
@@ -400,7 +535,7 @@ export function getTaskGuidance(progress: UpgradeState, task: OrgTask | null, op
   const nextMissingStep = stepStates.find((step) => !step.complete);
   return {
     label,
-    nextAction: nextMissingStep ? actionForStep(nextMissingStep) : "Bank cargo",
+    nextAction: nextMissingStep ? actionForStep(nextMissingStep) : "Store cargo",
     stepStates,
     isCraftReady,
     isBankReady,
@@ -414,7 +549,7 @@ export function getTaskStepStates(progress: UpgradeState, task: OrgTask): TaskSt
     return [];
   }
 
-  return task.requirements.map((requirement) => {
+  const steps = task.requirements.map((requirement) => {
     if (requirement.kind === "collect") {
       const current = Math.min(active.collected[requirement.ore], requirement.amount);
       return {
@@ -436,12 +571,44 @@ export function getTaskStepStates(progress: UpgradeState, task: OrgTask): TaskSt
       kind: requirement.kind
     };
   });
+
+  const collectTargets = task.requirements.filter((requirement) => requirement.kind === "collect").length;
+  if (collectTargets > 0) {
+    steps.push({
+    label: "Store cargo",
+      current: active.banked ? 1 : 0,
+      target: 1,
+      complete: active.banked || active.completed,
+      kind: "collect"
+    });
+  }
+
+  if (task.bossAchievement) {
+    const achievement = BOSS_ACHIEVEMENTS[task.bossAchievement];
+    steps.push({
+      label: achievement.label,
+      current: active.bossDefeated || progress.bossAchievements.includes(task.bossAchievement) ? 1 : 0,
+      target: 1,
+      complete: active.bossDefeated || progress.bossAchievements.includes(task.bossAchievement) || active.completed,
+      kind: "craft"
+    });
+  }
+
+  steps.push({
+      label: "Store",
+    current: active.extracted ? 1 : 0,
+    target: 1,
+    complete: active.extracted || active.completed,
+    kind: "collect"
+  });
+
+  return steps;
 }
 
 export function canCraftActiveTask(progress: UpgradeState): boolean {
   const task = getActiveTask(progress);
   const active = progress.activeTask;
-  if (!task?.recipe || !active || active.completed) {
+  if (!task?.recipe || !active || active.completed || !active.banked) {
     return false;
   }
 
@@ -452,11 +619,33 @@ function canPay(inventory: InventoryState, costs: Partial<Record<OreId, number>>
   return (Object.entries(costs) as Array<[OreId, number]>).every(([ore, amount]) => inventory[ore] >= amount);
 }
 
+function addInventory(target: InventoryState, source: InventoryState): void {
+  target.ferrite += source.ferrite;
+  target.shimmer += source.shimmer;
+  target.voltaic += source.voltaic;
+  target.aetherium += source.aetherium;
+}
+
+function payInventory(target: InventoryState, costs: Partial<Record<OreId, number>>): void {
+  for (const [ore, amount] of Object.entries(costs) as Array<[OreId, number]>) {
+    target[ore] = Math.max(0, target[ore] - amount);
+  }
+}
+
 function labelOre(ore: OreId): string {
   return ORE_CONFIG[ore].label;
 }
 
 function actionForStep(step: TaskStepState): string {
+  if (step.label === "Store cargo") {
+    return "Store cargo";
+  }
+  if (step.label === "Store") {
+    return "Store to finalize";
+  }
+  if (step.target === 1 && step.current === 0 && step.kind === "craft" && !step.label.includes("Frame") && !step.label.includes("Keystone") && !step.label.includes("Brace")) {
+    return `Defeat ${step.label}`;
+  }
   if (step.kind === "craft") {
     return `Gather materials for ${step.label}`;
   }

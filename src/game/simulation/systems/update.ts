@@ -1,6 +1,6 @@
-import { BLOCK_CONFIG, ENEMY_CONFIG, ORE_CONFIG } from "../../content/config";
-import { finishRun } from "../state";
-import { canCraftActiveTask, getActiveTask, getTaskStepStates, recordBossAchievement, recordTaskCollection } from "./progression";
+import { BLOCK_CONFIG, ENEMY_CONFIG, ORE_CONFIG, WEAPON_CONFIG } from "../../content/config";
+import { finishRun, storeCargo } from "../state";
+import { canCraftActiveTask, getActiveTask, getTaskStepStates, hasUnlock, recordBossAchievement, recordTaskCollection } from "./progression";
 import {
   TILE_SIZE,
   type BombState,
@@ -29,10 +29,6 @@ const SWARM_BOMB_DAMAGE = 42;
 const SWARM_BOMB_TILE_DAMAGE = 34;
 const SWARM_BOMB_RADIUS = 74;
 const SWARM_BOMB_COLOR = 0xd4845a;
-const PROJECTILE_SPEED = 720;
-const PROJECTILE_LIFETIME = 0.64;
-const PROJECTILE_BASE_INTERVAL = 0.3;
-const PROJECTILE_FAST_INTERVAL = 0.105;
 const OBJECTIVE_TARGET_RADIUS_TILES = 34;
 const OBJECTIVE_TARGET_LIMIT = 80;
 const OBJECTIVE_WAVE_COOLDOWN = 8.5;
@@ -58,6 +54,11 @@ export function updateGame(state: GameState, actions: InputActions, dt: number):
   state.player.bombCooldown = Math.max(0, state.player.bombCooldown - dt);
   state.player.weaponCooldown = Math.max(0, state.player.weaponCooldown - dt);
   state.player.blastRepeatCooldown = Math.max(0, state.player.blastRepeatCooldown - dt);
+  state.player.shieldActiveTimer = Math.max(0, state.player.shieldActiveTimer - dt);
+  state.player.shieldCooldown = Math.max(0, state.player.shieldCooldown - dt);
+  if (state.player.shieldActiveTimer <= 0 && state.player.shield < state.player.shieldMax) {
+    state.player.shield = Math.min(state.player.shieldMax, state.player.shield + 9 * dt);
+  }
   state.player.objectiveWaveCooldown = Math.max(0, state.player.objectiveWaveCooldown - dt);
   state.mission.waveTimer = Math.max(0, state.mission.waveTimer - dt);
   updateBlastRecharge(state, dt);
@@ -67,6 +68,7 @@ export function updateGame(state: GameState, actions: InputActions, dt: number):
 
   updateThreatMood(state);
   movePlayer(state, actions, dt);
+  activateShield(state, actions);
   fireSwarmBomb(state, actions);
   updateDrillShotWeapon(state, actions, dt);
   updateProjectiles(state, dt);
@@ -77,8 +79,10 @@ export function updateGame(state: GameState, actions: InputActions, dt: number):
   updatePickups(state, dt);
   updateMissionState(state);
 
-  if (distance(state.player, state.world.extraction) <= 72 && actions.extractPressed) {
-    finishRun(state, "extracted");
+  if (actions.extractPressed) {
+    if (storeCargo(state)) {
+      addEvent(state, "store-called", state.player.x, state.player.y, 0x5ab8a8);
+    }
   }
 
   if (!state.boss.active && !state.boss.defeated && state.threat.value >= state.threat.max) {
@@ -99,6 +103,10 @@ function movePlayer(state: GameState, actions: InputActions, dt: number): void {
   state.player.vy = lerp(state.player.vy, targetVy, 0.22);
 
   if (actions.dashPressed && state.player.dashCooldown <= 0) {
+    if (!hasUnlock(state.upgrades, "dashModule")) {
+      addEvent(state, "ability-locked", state.player.x, state.player.y, 0xc45a4a);
+      return;
+    }
     const aimDir = normalize({
       x: actions.aim.x - state.player.x,
       y: actions.aim.y - state.player.y
@@ -140,6 +148,12 @@ function fireSwarmBomb(state: GameState, actions: InputActions): void {
     return;
   }
 
+  if (!hasUnlock(state.upgrades, "swarmBlast")) {
+    addEvent(state, "ability-locked", state.player.x, state.player.y, 0xc45a4a);
+    state.player.blastRepeatCooldown = 0.25;
+    return;
+  }
+
   const aimDir = normalize({
     x: actions.aim.x - state.player.x,
     y: actions.aim.y - state.player.y
@@ -176,6 +190,26 @@ function fireSwarmBomb(state: GameState, actions: InputActions): void {
   state.threat.value = clamp(state.threat.value + 1.2, 0, state.threat.max);
   addEvent(state, "blast-charge-spent", startX, startY, SWARM_BOMB_COLOR, state.player.blastCharges);
   addEvent(state, "swarm-bomb-fired", startX, startY, SWARM_BOMB_COLOR);
+}
+
+function activateShield(state: GameState, actions: InputActions): void {
+  if (!actions.shieldPressed) {
+    return;
+  }
+
+  if (!hasUnlock(state.upgrades, "shieldEmitter")) {
+    addEvent(state, "ability-locked", state.player.x, state.player.y, 0xc45a4a);
+    return;
+  }
+
+  if (state.player.shieldCooldown > 0 || state.player.shield <= 0) {
+    return;
+  }
+
+  state.player.shieldActiveTimer = 2.2;
+  state.player.shieldCooldown = 5.8;
+  state.player.shield = state.player.shieldMax;
+  addEvent(state, "shield-activated", state.player.x, state.player.y, 0x5ab8a8);
 }
 
 function updateBlastRecharge(state: GameState, dt: number): void {
@@ -272,6 +306,9 @@ function damageTilesInExplosion(state: GameState, x: number, y: number): void {
   for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
     for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
       const tile = state.world.tiles[tileY * state.world.width + tileX];
+      if (!tile) {
+        continue;
+      }
       if (!isSolid(tile) || tile.type === "ancient") {
         continue;
       }
@@ -308,6 +345,7 @@ function bombHitsBoss(state: GameState, x: number, y: number, radius: number): b
 
 function updateDrillShotWeapon(state: GameState, actions: InputActions, dt: number): void {
   const player = state.player;
+  const weapon = WEAPON_CONFIG[state.upgrades.equippedWeapon] ?? WEAPON_CONFIG.drillShot;
 
   if (player.overheatedTimer > 0) {
     player.overheatedTimer = Math.max(0, player.overheatedTimer - dt);
@@ -336,8 +374,8 @@ function updateDrillShotWeapon(state: GameState, actions: InputActions, dt: numb
   const direction = length(aimDir) === 0
     ? { x: Math.cos(player.angle), y: Math.sin(player.angle) }
     : aimDir;
-  const fireInterval = lerp(PROJECTILE_BASE_INTERVAL, PROJECTILE_FAST_INTERVAL, player.weaponSpool);
-  const shotHeat = lerp(5.2, 3.6, player.weaponSpool);
+  const fireInterval = lerp(weapon.baseInterval, weapon.fastInterval, player.weaponSpool);
+  const shotHeat = lerp(weapon.heatMax, weapon.heatMin, player.weaponSpool);
   player.heat += shotHeat;
   player.weaponCooldown = fireInterval;
 
@@ -348,20 +386,27 @@ function updateDrillShotWeapon(state: GameState, actions: InputActions, dt: numb
     return;
   }
 
-  const projectile: ProjectileState = {
-    id: `shot-${state.elapsed.toFixed(3)}-${state.projectiles.length}`,
-    x: player.x + direction.x * 24,
-    y: player.y + direction.y * 24,
-    vx: direction.x * PROJECTILE_SPEED + player.vx * 0.12,
-    vy: direction.y * PROJECTILE_SPEED + player.vy * 0.12,
-    radius: 5,
-    age: 0,
-    lifetime: PROJECTILE_LIFETIME,
-    damage: 13 + state.upgrades.laserPower * 4,
-    color: 0xe8c86a
-  };
-  state.projectiles.push(projectile);
-  addEvent(state, "projectile-fired", projectile.x, projectile.y, projectile.color, player.weaponSpool);
+  const baseAngle = Math.atan2(direction.y, direction.x);
+  for (let index = 0; index < weapon.projectileCount; index += 1) {
+    const spreadIndex = index - (weapon.projectileCount - 1) / 2;
+    const angle = baseAngle + spreadIndex * weapon.spread;
+    const projectile: ProjectileState = {
+      id: `shot-${state.elapsed.toFixed(3)}-${state.projectiles.length}-${index}`,
+      owner: "player",
+      x: player.x + Math.cos(angle) * 24,
+      y: player.y + Math.sin(angle) * 24,
+      vx: Math.cos(angle) * weapon.speed + player.vx * 0.12,
+      vy: Math.sin(angle) * weapon.speed + player.vy * 0.12,
+      radius: weapon.id === "piercer" ? 6 : 5,
+      age: 0,
+      lifetime: weapon.lifetime,
+      damage: weapon.damage + state.upgrades.laserPower * (weapon.id === "scatter" ? 2.4 : 4),
+      color: weapon.id === "piercer" ? 0xf0e4cc : weapon.id === "scatter" ? 0xd4845a : 0xe8c86a,
+      pierces: weapon.pierces
+    };
+    state.projectiles.push(projectile);
+    addEvent(state, "projectile-fired", projectile.x, projectile.y, projectile.color, player.weaponSpool);
+  }
 }
 
 function updateProjectiles(state: GameState, dt: number): void {
@@ -377,6 +422,25 @@ function updateProjectiles(state: GameState, dt: number): void {
     }
 
     const tile = tileAtWorld(state.world, nextX, nextY);
+    if (projectile.owner === "enemy") {
+      if (isSolid(tile)) {
+        addEvent(state, "projectile-hit", nextX, nextY, projectile.color, projectile.damage);
+        state.projectiles.splice(index, 1);
+        continue;
+      }
+
+      if (distance({ x: nextX, y: nextY }, state.player) < projectile.radius + 13) {
+        damagePlayer(state, projectile.damage, nextX, nextY);
+        addEvent(state, "projectile-hit", nextX, nextY, projectile.color, projectile.damage);
+        state.projectiles.splice(index, 1);
+        continue;
+      }
+
+      projectile.x = nextX;
+      projectile.y = nextY;
+      continue;
+    }
+
     if (isSolid(tile)) {
       const hitX = nextX;
       const hitY = nextY;
@@ -386,7 +450,13 @@ function updateProjectiles(state: GameState, dt: number): void {
         triggerObjectiveWave(state, hitX, hitY);
       }
       addEvent(state, "projectile-hit", hitX, hitY, BLOCK_CONFIG[tile.type].glow, projectile.damage);
-      state.projectiles.splice(index, 1);
+      if (projectile.pierces <= 0) {
+        state.projectiles.splice(index, 1);
+      } else {
+        projectile.pierces -= 1;
+        projectile.x = nextX;
+        projectile.y = nextY;
+      }
       continue;
     }
 
@@ -396,6 +466,10 @@ function updateProjectiles(state: GameState, dt: number): void {
         damageEnemy(state, enemy, projectile.damage * 1.15);
         addEvent(state, "projectile-hit", nextX, nextY, ENEMY_CONFIG[enemy.kind].color, projectile.damage);
         hitEnemy = true;
+        if (projectile.pierces > 0) {
+          projectile.pierces -= 1;
+          hitEnemy = false;
+        }
         break;
       }
     }
@@ -450,9 +524,9 @@ function updateMissionState(state: GameState): void {
     state.inventory.shimmer * ORE_CONFIG.shimmer.value +
     state.inventory.voltaic * ORE_CONFIG.voltaic.value +
     state.inventory.aetherium * ORE_CONFIG.aetherium.value;
-  const extractReady = cargoValue > 0 && distance(state.player, state.world.extraction) <= 96;
+  const extractReady = cargoValue > 0;
   if (extractReady && !state.mission.extractReady) {
-    addEvent(state, "extract-ready", state.world.extraction.x, state.world.extraction.y, 0x5ab8a8);
+    addEvent(state, "extract-ready", state.player.x, state.player.y, 0x5ab8a8);
   }
   state.mission.extractReady = extractReady;
 }
@@ -544,7 +618,7 @@ function createObjectiveWaveEnemy(state: GameState, index: number): EnemyState |
 
     const x = tileX * TILE_SIZE + TILE_SIZE / 2;
     const y = tileY * TILE_SIZE + TILE_SIZE / 2;
-    if (distance({ x, y }, state.player) < 320 || circleHitsSolid(state, x, y, config.radius)) {
+    if (distance({ x, y }, state.player) < 320 || !isValidEnemySpawn(state, x, y, config.radius)) {
       continue;
     }
 
@@ -590,7 +664,10 @@ function updateEnemies(state: GameState, dt: number): void {
       enemy.cooldown = Math.max(0, enemy.cooldown - dt);
 
       if (enemy.state === "patrol") {
-        enemy.x += enemy.direction * 64 * dt;
+        const moved = moveEnemyWithCollision(state, enemy, enemy.direction * 64 * dt, 0, 0.18);
+        if (moved.hitX) {
+          enemy.direction *= -1;
+        }
         if (Math.abs(enemy.x - enemy.anchorX) > 74) {
           enemy.direction *= -1;
         }
@@ -611,8 +688,10 @@ function updateEnemies(state: GameState, dt: number): void {
           enemy.state = "dash";
         }
       } else if (enemy.state === "dash") {
-        enemy.x += enemy.vx * dt;
-        enemy.y += enemy.vy * dt;
+        const moved = moveEnemyWithCollision(state, enemy, enemy.vx * dt, enemy.vy * dt, -0.22);
+        if (moved.hitX || moved.hitY) {
+          enemy.timer = 0;
+        }
         enemy.timer -= dt;
         if (playerDistance < enemy.radius + 14) {
           damagePlayer(state, ENEMY_CONFIG.prismStalker.damage, enemy.x, enemy.y);
@@ -630,13 +709,40 @@ function updateEnemies(state: GameState, dt: number): void {
       const dir = normalize({ x: state.player.x - enemy.x, y: state.player.y - enemy.y });
       enemy.vx = lerp(enemy.vx, dir.x * 78, 0.05);
       enemy.vy = lerp(enemy.vy, dir.y * 78, 0.05);
-      enemy.x += enemy.vx * dt;
-      enemy.y += enemy.vy * dt;
+      const moved = moveEnemyWithCollision(state, enemy, enemy.vx * dt, enemy.vy * dt, 0.05);
+      if (moved.hitX || moved.hitY) {
+        enemy.timer += 1.4 * dt;
+      }
       enemy.timer += dt;
 
       if (playerDistance < 42 || enemy.timer > 11) {
         explodeSparkSac(state, enemy);
         state.enemies.splice(index, 1);
+      }
+    }
+
+    if (enemy.kind === "phaseMite") {
+      enemy.cooldown = Math.max(0, enemy.cooldown - dt);
+      enemy.timer += dt;
+      const playerDir = normalize({ x: state.player.x - enemy.x, y: state.player.y - enemy.y });
+      const orbit = {
+        x: -playerDir.y * Math.sin(enemy.timer * 2.4),
+        y: playerDir.x * Math.sin(enemy.timer * 2.4)
+      };
+      enemy.vx = lerp(enemy.vx, (playerDir.x * 96 + orbit.x * 78), 0.045);
+      enemy.vy = lerp(enemy.vy, (playerDir.y * 96 + orbit.y * 78), 0.045);
+      const moved = moveEnemyWithCollision(state, enemy, enemy.vx * dt, enemy.vy * dt, -0.12);
+      if (moved.hitX || moved.hitY) {
+        enemy.cooldown = Math.max(enemy.cooldown, 0.34);
+      }
+
+      if (enemy.cooldown <= 0 && playerDistance < 280) {
+        enemy.cooldown = 1.55;
+        fireHostileProjectile(state, enemy.x, enemy.y, state.player.x, state.player.y, 260, 9, 0xe8c86a, 0.06);
+      }
+
+      if (playerDistance < enemy.radius + 13) {
+        damagePlayer(state, ENEMY_CONFIG.phaseMite.damage, enemy.x, enemy.y);
       }
     }
   }
@@ -649,10 +755,18 @@ function updateBoss(state: GameState, dt: number): void {
   }
 
   const dir = normalize({ x: state.player.x - boss.x, y: state.player.y - boss.y });
-  boss.vx = lerp(boss.vx, dir.x * 126, 0.035);
-  boss.vy = lerp(boss.vy, dir.y * 126, 0.035);
-  boss.x += boss.vx * dt;
-  boss.y += boss.vy * dt;
+  const bossSpeed = boss.kind === "sentinelEye" ? 92 : 126;
+  boss.vx = lerp(boss.vx, dir.x * bossSpeed, 0.035);
+  boss.vy = lerp(boss.vy, dir.y * bossSpeed, 0.035);
+  const bossMoved = moveCircleWithCollision(state, boss.x, boss.y, boss.vx * dt, boss.vy * dt, 28, -0.08);
+  boss.x = bossMoved.x;
+  boss.y = bossMoved.y;
+  if (bossMoved.hitX) {
+    boss.vx *= -0.08;
+  }
+  if (bossMoved.hitY) {
+    boss.vy *= -0.08;
+  }
 
   const previous: BossSegmentState = { x: boss.x, y: boss.y, radius: 26 };
   for (const segment of boss.segments) {
@@ -678,10 +792,58 @@ function updateBoss(state: GameState, dt: number): void {
 
   boss.cooldown -= dt;
   if (boss.cooldown <= 0) {
-    boss.cooldown = 2.15;
+    boss.cooldown = boss.kind === "sentinelEye" ? 1.25 : 1.85;
     const spread = normalize({ x: state.player.x - boss.x, y: state.player.y - boss.y });
-    createLightning(state, boss.x, boss.y, boss.x + spread.x * 380, boss.y + spread.y * 380);
+    const baseAngle = Math.atan2(spread.y, spread.x);
+    const bulletCount = boss.kind === "sentinelEye" ? 5 : 3;
+    for (let index = 0; index < bulletCount; index += 1) {
+      const offset = index - (bulletCount - 1) / 2;
+      fireHostileProjectile(
+        state,
+        boss.x,
+        boss.y,
+        boss.x + Math.cos(baseAngle + offset * 0.18) * 240,
+        boss.y + Math.sin(baseAngle + offset * 0.18) * 240,
+        boss.kind === "sentinelEye" ? 310 : 280,
+        boss.kind === "sentinelEye" ? 12 : 14,
+        boss.kind === "sentinelEye" ? 0xe8c86a : 0x8a6db8,
+        0
+      );
+    }
+    if (boss.kind === "sentinelEye") {
+      const sideAngle = baseAngle + Math.PI / 2;
+      fireHostileProjectile(state, boss.x, boss.y, boss.x + Math.cos(sideAngle) * 260, boss.y + Math.sin(sideAngle) * 260, 230, 10, 0xf0d38a, 0);
+      fireHostileProjectile(state, boss.x, boss.y, boss.x - Math.cos(sideAngle) * 260, boss.y - Math.sin(sideAngle) * 260, 230, 10, 0xf0d38a, 0);
+    }
   }
+}
+
+function fireHostileProjectile(
+  state: GameState,
+  fromX: number,
+  fromY: number,
+  toX: number,
+  toY: number,
+  speed: number,
+  damage: number,
+  color: number,
+  spread: number
+): void {
+  const angle = Math.atan2(toY - fromY, toX - fromX) + spread;
+  state.projectiles.push({
+    id: `enemy-shot-${state.elapsed.toFixed(3)}-${state.projectiles.length}`,
+    owner: "enemy",
+    x: fromX + Math.cos(angle) * 24,
+    y: fromY + Math.sin(angle) * 24,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
+    radius: 7,
+    age: 0,
+    lifetime: 2.2,
+    damage,
+    color,
+    pierces: 0
+  });
 }
 
 function updateHazards(state: GameState, dt: number): void {
@@ -838,19 +1000,50 @@ function startBossBreakout(state: GameState): void {
   const boss = state.boss;
   boss.active = true;
   boss.defeated = false;
+  boss.kind = getActiveTask(state.upgrades)?.bossAchievement ?? "voltrixCore";
+  boss.maxHealth = boss.kind === "sentinelEye" ? 320 : 420;
   boss.health = boss.maxHealth;
-  boss.x = clamp(state.player.x + 620, 220, state.world.width * TILE_SIZE - 220);
-  boss.y = clamp(state.player.y - 180, 120, state.world.height * TILE_SIZE - 120);
+  const spawn = findBossSpawnPosition(state);
+  boss.x = spawn.x;
+  boss.y = spawn.y;
   boss.vx = -80;
   boss.vy = 20;
   boss.cooldown = 1.25;
-  boss.segments = Array.from({ length: 7 }, (_, index) => ({
+  boss.segments = Array.from({ length: boss.kind === "sentinelEye" ? 4 : 7 }, (_, index) => ({
     x: boss.x + (index + 1) * 34,
     y: boss.y + Math.sin(index) * 12,
     radius: Math.max(17, 26 - index)
   }));
   state.threat.mood = "breakout";
-  addEvent(state, "boss-breakout", state.player.x, state.player.y, 0x8a6db8);
+  addEvent(state, "boss-breakout", state.player.x, state.player.y, boss.kind === "sentinelEye" ? 0xe8c86a : 0x8a6db8);
+}
+
+function findBossSpawnPosition(state: GameState): Vec2 {
+  const preferredAngle = -0.28;
+  const radiusOptions = [520, 620, 440, 700, 360, 780];
+  for (const radius of radiusOptions) {
+    for (let step = 0; step < 20; step += 1) {
+      const angle = preferredAngle + (step % 2 === 0 ? 1 : -1) * Math.ceil(step / 2) * 0.24;
+      const x = state.player.x + Math.cos(angle) * radius;
+      const y = state.player.y + Math.sin(angle) * radius;
+      if (isValidEnemySpawn(state, x, y, 34)) {
+        return { x, y };
+      }
+    }
+  }
+
+  for (let tileRadius = 8; tileRadius < 36; tileRadius += 2) {
+    for (let angleStep = 0; angleStep < 24; angleStep += 1) {
+      const angle = (angleStep / 24) * Math.PI * 2;
+      const x = state.player.x + Math.cos(angle) * tileRadius * TILE_SIZE;
+      const y = state.player.y + Math.sin(angle) * tileRadius * TILE_SIZE;
+      if (isValidEnemySpawn(state, x, y, 34)) {
+        return { x, y };
+      }
+    }
+  }
+
+  return { x: state.world.spawn.x, y: state.world.spawn.y };
 }
 
 function damageBoss(state: GameState, amount: number, x: number, y: number): void {
@@ -867,8 +1060,29 @@ function damageBoss(state: GameState, amount: number, x: number, y: number): voi
     state.boss.active = false;
     state.threat.value = Math.min(state.threat.value, state.threat.max * 0.42);
     state.threat.zoneTimer = 0;
-    recordBossAchievement(state.upgrades, "voltrixCore");
+    dropBossReward(state);
+    recordBossAchievement(state.upgrades, state.boss.kind);
     addEvent(state, "boss-defeated", state.boss.x, state.boss.y, 0xc47a8a);
+  }
+}
+
+function dropBossReward(state: GameState): void {
+  const drops: Array<{ ore: OreId; count: number }> = state.boss.kind === "sentinelEye"
+    ? [
+      { ore: "voltaic", count: 3 },
+      { ore: "shimmer", count: 4 }
+    ]
+    : [
+      { ore: "aetherium", count: 2 },
+      { ore: "voltaic", count: 4 }
+    ];
+
+  let dropIndex = 0;
+  for (const drop of drops) {
+    for (let index = 0; index < drop.count; index += 1) {
+      spawnPickup(state, drop.ore, state.boss.x, state.boss.y, 40 + dropIndex);
+      dropIndex += 1;
+    }
   }
 }
 
@@ -894,9 +1108,107 @@ function damagePlayer(state: GameState, amount: number, x: number, y: number): v
     return;
   }
 
+  if (state.player.shieldActiveTimer > 0 && state.player.shield > 0) {
+    const absorbed = Math.min(state.player.shield, amount);
+    state.player.shield -= absorbed;
+    amount -= absorbed;
+    if (state.player.shield <= 0) {
+      state.player.shieldActiveTimer = 0;
+      state.player.shieldCooldown = Math.max(state.player.shieldCooldown, 4.8);
+      addEvent(state, "shield-broken", state.player.x, state.player.y, 0x5ab8a8);
+    }
+    if (amount <= 0) {
+      return;
+    }
+  }
+
   state.player.hull = Math.max(0, state.player.hull - amount);
   state.player.invulnerableTimer = 0.35;
   addEvent(state, "player-hit", x, y, 0xc45a4a, amount);
+}
+
+function moveEnemyWithCollision(
+  state: GameState,
+  enemy: EnemyState,
+  dx: number,
+  dy: number,
+  bounce: number
+): { hitX: boolean; hitY: boolean } {
+  const moved = moveCircleWithCollision(state, enemy.x, enemy.y, dx, dy, Math.max(8, enemy.radius * 0.72), bounce);
+  enemy.x = moved.x;
+  enemy.y = moved.y;
+  if (moved.hitX) {
+    enemy.vx *= bounce;
+  }
+  if (moved.hitY) {
+    enemy.vy *= bounce;
+  }
+  return { hitX: moved.hitX, hitY: moved.hitY };
+}
+
+function moveCircleWithCollision(
+  state: GameState,
+  x: number,
+  y: number,
+  dx: number,
+  dy: number,
+  radius: number,
+  _bounce: number
+): { x: number; y: number; hitX: boolean; hitY: boolean } {
+  const bounds = worldBounds(state.world);
+  let nextX = clamp(x + dx, radius, bounds.width - radius);
+  let nextY = y;
+  let hitX = nextX !== x + dx;
+  let hitY = false;
+
+  if (circleHitsSolid(state, nextX, y, radius)) {
+    nextX = x;
+    hitX = true;
+  }
+
+  nextY = clamp(y + dy, radius, bounds.height - radius);
+  hitY = nextY !== y + dy;
+  if (circleHitsSolid(state, nextX, nextY, radius)) {
+    nextY = y;
+    hitY = true;
+  }
+
+  return { x: nextX, y: nextY, hitX, hitY };
+}
+
+function isValidEnemySpawn(state: GameState, x: number, y: number, radius: number): boolean {
+  const bounds = worldBounds(state.world);
+  if (x < radius || y < radius || x > bounds.width - radius || y > bounds.height - radius) {
+    return false;
+  }
+
+  if (circleHitsSolid(state, x, y, radius)) {
+    return false;
+  }
+
+  const tileX = Math.floor(x / TILE_SIZE);
+  const tileY = Math.floor(y / TILE_SIZE);
+  const center = getTile(state.world, tileX, tileY);
+  if (isSolid(center)) {
+    return false;
+  }
+
+  let openNeighbors = 0;
+  const checks = [
+    [tileX - 1, tileY],
+    [tileX + 1, tileY],
+    [tileX, tileY - 1],
+    [tileX, tileY + 1],
+    [tileX - 1, tileY - 1],
+    [tileX + 1, tileY + 1]
+  ];
+  for (const [xTile, yTile] of checks) {
+    if (!isSolid(getTile(state.world, xTile, yTile))) {
+      openNeighbors += 1;
+    }
+  }
+
+  return openNeighbors >= 3;
 }
 
 function circleHitsSolid(state: GameState, x: number, y: number, radius: number): boolean {

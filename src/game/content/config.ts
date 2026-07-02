@@ -4,11 +4,14 @@ import type {
   CraftRecipe,
   EffectiveStats,
   EnemyId,
+  InventoryCost,
   MapVariantId,
   OreId,
   OrgTask,
   TerritoryId,
-  UpgradeId
+  UpgradeId,
+  UnlockId,
+  WeaponId
 } from "../simulation/types";
 
 export interface OreConfig {
@@ -47,6 +50,30 @@ export interface UpgradeConfig {
   maxLevel: number;
   baseCost: number;
   costStep: number;
+}
+
+export interface UnlockConfig {
+  id: UnlockId;
+  label: string;
+  description: string;
+  cost: number;
+  requiresTask?: string;
+}
+
+export interface WeaponConfig {
+  id: WeaponId;
+  label: string;
+  unlock?: UnlockId;
+  projectileCount: number;
+  damage: number;
+  speed: number;
+  lifetime: number;
+  baseInterval: number;
+  fastInterval: number;
+  heatMin: number;
+  heatMax: number;
+  spread: number;
+  pierces: number;
 }
 
 export interface TerritoryConfig {
@@ -129,17 +156,17 @@ export const BLOCK_CONFIG: Record<BlockId, BlockConfig> = {
   ferrite: {
     id: "ferrite",
     label: "Ferrite",
-    health: 32,
+    health: 28,
     color: 0x1a1710,
     glow: 0xc4a86e,
     drop: "ferrite",
-    dropMin: 1,
-    dropMax: 3
+    dropMin: 2,
+    dropMax: 4
   },
   shimmer: {
     id: "shimmer",
     label: "Shimmer Crystal",
-    health: 44,
+    health: 52,
     color: 0x151020,
     glow: 0x8a6db8,
     drop: "shimmer",
@@ -149,7 +176,7 @@ export const BLOCK_CONFIG: Record<BlockId, BlockConfig> = {
   voltaic: {
     id: "voltaic",
     label: "Voltaic Dust",
-    health: 54,
+    health: 88,
     color: 0x0a1c1a,
     glow: 0x5ab8a8,
     drop: "voltaic",
@@ -159,7 +186,7 @@ export const BLOCK_CONFIG: Record<BlockId, BlockConfig> = {
   aetherium: {
     id: "aetherium",
     label: "Aetherium",
-    health: 72,
+    health: 142,
     color: 0x201018,
     glow: 0xc47a8a,
     drop: "aetherium",
@@ -204,6 +231,15 @@ export const ENEMY_CONFIG: Record<EnemyId, EnemyConfig> = {
     radius: 18,
     color: 0xd4845a,
     threatOnKill: 4
+  },
+  phaseMite: {
+    id: "phaseMite",
+    label: "Phase Mite",
+    health: 58,
+    damage: 10,
+    radius: 16,
+    color: 0xe8c86a,
+    threatOnKill: 7
   }
 };
 
@@ -211,37 +247,119 @@ export const UPGRADE_CONFIG: Record<UpgradeId, UpgradeConfig> = {
   laserPower: {
     id: "laserPower",
     label: "Laser Power",
-    maxLevel: 5,
-    baseCost: 80,
-    costStep: 68
+    maxLevel: 8,
+    baseCost: 70,
+    costStep: 86
   },
   heatSink: {
     id: "heatSink",
     label: "Heat Sink",
-    maxLevel: 5,
-    baseCost: 70,
-    costStep: 58
+    maxLevel: 8,
+    baseCost: 65,
+    costStep: 78
   },
   magnetRadius: {
     id: "magnetRadius",
     label: "Magnet Radius",
-    maxLevel: 5,
-    baseCost: 60,
-    costStep: 54
+    maxLevel: 8,
+    baseCost: 55,
+    costStep: 68
   },
   hull: {
     id: "hull",
     label: "Hull",
-    maxLevel: 5,
-    baseCost: 85,
-    costStep: 72
+    maxLevel: 8,
+    baseCost: 80,
+    costStep: 88
   },
   engine: {
     id: "engine",
     label: "Engine",
-    maxLevel: 5,
+    maxLevel: 8,
     baseCost: 75,
-    costStep: 64
+    costStep: 82
+  }
+};
+
+export const UNLOCK_CONFIG: Record<UnlockId, UnlockConfig> = {
+  dashModule: {
+    id: "dashModule",
+    label: "Dash Module",
+    description: "Restores the emergency cursor dash.",
+    cost: 120
+  },
+  shieldEmitter: {
+    id: "shieldEmitter",
+    label: "Shield Emitter",
+    description: "Adds a short defensive shield on Space.",
+    cost: 180
+  },
+  swarmBlast: {
+    id: "swarmBlast",
+    label: "Swarm Blast",
+    description: "Unlocks the right-click burst-cluster blast.",
+    cost: 220
+  },
+  piercerWeapon: {
+    id: "piercerWeapon",
+    label: "Piercer Weapon",
+    description: "A slower heavy shot for tough ore and armored targets.",
+    cost: 360,
+    requiresTask: "sv-relay-frame"
+  },
+  scatterWeapon: {
+    id: "scatterWeapon",
+    label: "Scatter Weapon",
+    description: "A close-range spread weapon for pressure clearing.",
+    cost: 480,
+    requiresTask: "sv-voltaic-keystone"
+  }
+};
+
+export const WEAPON_CONFIG: Record<WeaponId, WeaponConfig> = {
+  drillShot: {
+    id: "drillShot",
+    label: "Drill Shot",
+    projectileCount: 1,
+    damage: 13,
+    speed: 720,
+    lifetime: 0.64,
+    baseInterval: 0.3,
+    fastInterval: 0.105,
+    heatMin: 3.6,
+    heatMax: 5.2,
+    spread: 0,
+    pierces: 0
+  },
+  piercer: {
+    id: "piercer",
+    label: "Piercer",
+    unlock: "piercerWeapon",
+    projectileCount: 1,
+    damage: 28,
+    speed: 780,
+    lifetime: 0.78,
+    baseInterval: 0.46,
+    fastInterval: 0.22,
+    heatMin: 7.8,
+    heatMax: 10.4,
+    spread: 0,
+    pierces: 2
+  },
+  scatter: {
+    id: "scatter",
+    label: "Scatter",
+    unlock: "scatterWeapon",
+    projectileCount: 5,
+    damage: 8,
+    speed: 620,
+    lifetime: 0.42,
+    baseInterval: 0.42,
+    fastInterval: 0.19,
+    heatMin: 8,
+    heatMax: 11,
+    spread: 0.18,
+    pierces: 0
   }
 };
 
@@ -308,6 +426,11 @@ export const BOSS_ACHIEVEMENTS: Record<BossAchievement["id"], BossAchievement> =
     label: "Voltrix Core",
     territory: "shimmerVeins"
   },
+  sentinelEye: {
+    id: "sentinelEye",
+    label: "Sentinel Eye",
+    territory: "shimmerVeins"
+  },
   pyroclastMark: {
     id: "pyroclastMark",
     label: "Pyroclast Mark",
@@ -351,6 +474,7 @@ export const ORG_TASKS: OrgTask[] = [
     territory: "shimmerVeins",
     mapVariant: "ribbon",
     recipe: "relayFrame",
+    unlocks: ["piercerWeapon"],
     requirements: [
       { kind: "collect", ore: "ferrite", amount: 24 },
       { kind: "collect", ore: "shimmer", amount: 8 },
@@ -363,6 +487,8 @@ export const ORG_TASKS: OrgTask[] = [
     territory: "shimmerVeins",
     mapVariant: "fracture",
     recipe: "voltaicKeystone",
+    bossAchievement: "sentinelEye",
+    unlocks: ["scatterWeapon"],
     unlocksTerritory: "cinderHollows",
     requirements: [
       { kind: "collect", ore: "ferrite", amount: 36 },
@@ -377,6 +503,7 @@ export const ORG_TASKS: OrgTask[] = [
     territory: "cinderHollows",
     mapVariant: "sink",
     recipe: "cinderBrace",
+    bossAchievement: "voltrixCore",
     requirements: [
       { kind: "collect", ore: "ferrite", amount: 34 },
       { kind: "collect", ore: "shimmer", amount: 10 },
@@ -401,4 +528,52 @@ export const BASE_STATS: EffectiveStats = {
 export function upgradeCost(id: UpgradeId, level: number): number {
   const config = UPGRADE_CONFIG[id];
   return config.baseCost + config.costStep * level + Math.floor(level * level * 16);
+}
+
+export function upgradeMaterialCost(id: UpgradeId, level: number): InventoryCost {
+  const tier = level + 1;
+  const common = 6 + tier * 4;
+  const uncommon = Math.max(0, tier - 1) * 2;
+  const rare = Math.max(0, tier - 3);
+  const deep = Math.max(0, tier - 6);
+
+  if (id === "laserPower") {
+    return {
+      ferrite: common,
+      shimmer: uncommon + 1,
+      voltaic: rare,
+      aetherium: deep
+    };
+  }
+
+  if (id === "heatSink") {
+    return {
+      ferrite: Math.ceil(common * 0.7),
+      shimmer: uncommon + 2,
+      voltaic: Math.max(0, rare - 1)
+    };
+  }
+
+  if (id === "magnetRadius") {
+    return {
+      ferrite: common + 2,
+      shimmer: Math.max(0, uncommon - 1),
+      voltaic: Math.max(0, rare - 1)
+    };
+  }
+
+  if (id === "hull") {
+    return {
+      ferrite: common + 6,
+      shimmer: Math.max(0, uncommon - 1),
+      voltaic: rare
+    };
+  }
+
+  return {
+    ferrite: common,
+    shimmer: uncommon,
+    voltaic: rare + 1,
+    aetherium: deep
+  };
 }

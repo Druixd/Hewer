@@ -21,7 +21,7 @@ The first playable slice implemented The Shimmer Veins only. Post-v0 progression
 
 HEWER is now past the v0 slice. The main goal is no longer "beat Voltrix." The organization gives the player an active order tied to a territory. Orders ask the player to collect specific mineral amounts and craft named objective items from authored recipes. This gives each run a clear practical purpose even when the boss does not appear.
 
-Bosses are territory achievements. Defeating Voltrix awards the Voltrix Core achievement and bonus value, but it does not replace the active org order and does not automatically complete the run. The player still needs to extract or bank cargo through the normal loop.
+Bosses are territory achievements. Defeating Voltrix awards the Voltrix Core achievement and bonus value, but it does not replace the active org order and does not automatically complete the run. The player still needs to call Store and bank cargo through the normal loop.
 
 The first post-v0 progression pass uses automatic active orders instead of a full mission board. If the player has no active order, the game assigns the next incomplete order from unlocked territories. Completing key orders can unlock additional territories.
 
@@ -86,7 +86,7 @@ The combat feel should lean slightly more bullet-hell-like than the first slice:
 
 ## Base Loop
 
-Between runs, the player sees a compact run summary, sells collected minerals, and buys visible ship upgrades. The first slice keeps this as a DOM post-run screen with local save data:
+When Store is called, the player sees a compact service-bay summary, sells collected minerals, and buys visible ship upgrades without leaving the current cave. The first slice keeps this as a DOM service screen with local save data:
 
 - Laser Power
 - Heat Sink
@@ -153,6 +153,8 @@ The minimap is a local navigation instrument, not a full level map. It should st
 
 The visual target is not a generic dashboard. The HUD should feel like functional mining ship instrumentation: compact bars, mineral counters, small state readouts, and restrained transitions. Strong motion is reserved for danger, impact, mineral collection, boss breakout, and rewards.
 
+Browser identity should follow the same readable mining-instrument language. The favicon should stay legible at small tab sizes, use the HEWER mark or initial clearly, and pull from the dark hull, warm cream, copper, and cyan accent palette rather than decorative detail.
+
 The cave should not read as fully visible at all times. Keep the far environment dark, use local visibility around the player, and make important ores, enemies, bombs, and hazards read through additive emission-style glow. Avoid relying on sprite opacity as the primary lighting language.
 
 Lighting should fake depth before attempting expensive true normal-map rendering. The first lighting pass uses a player-centered visibility falloff, additive light blooms from pickups/enemies/projectiles/bombs/objective cues, and procedural relief only where it improves readability: ore facets, player/emitted objects, cracked-tile hot edges, and other light-bearing elements. Plain basalt and ancient cave mass should avoid per-tile normal frames because they make the level read as a square grid; terrain mass should stay low-contrast, softly mottled, and readable mainly by its outer cave edges. Real shader normal maps remain later scope only if the cheaper visual language is not enough.
@@ -177,7 +179,7 @@ Audio should stop sounding robotic or aggressively sci-fi. The target is warm su
 
 The post-run upgrade menu should become a visual ship bay. The player should see the ship silhouette and five upgrade nodes around it for weapon output, fire control/cooling, magnet, hull, and engine. Buying or previewing an upgrade should show before/after bars and a short pulse on the affected ship area instead of relying on text-heavy buttons.
 
-The same cockpit service-bay language should extend to crafting and selling. After extraction, the player should read the screen as a ship console: a left bank/cargo column, a main services board, and clear category rails for upgrades, workshop/crafting, and cargo exchange. Upgrades keep the ship-node layout. Crafting uses a modified workshop panel that shows the current order recipe, required material sockets, readiness, and a single craft action. Selling/banking uses a cargo exchange panel that shows extracted cargo value, account balance, and the already-banked result without implying a second manual sell step.
+The same cockpit service-bay language should extend to crafting and selling. After Store docks, the player should read the screen as a ship console: a left bank/cargo column, a main services board, and clear category rails for upgrades, workshop/crafting, and cargo exchange. Upgrades keep the ship-node layout. Crafting uses a modified workshop panel that shows the current order recipe, required material sockets, readiness, and a single craft action. Selling/banking uses a cargo exchange panel that shows stored cargo value, account balance, and the already-banked result without implying a second manual sell step.
 
 ## Cave Readability And Minimal HUD Pass
 
@@ -187,4 +189,52 @@ Ore color identity must be consistent from world tile to glow to pickup art to H
 
 Breakable cave tiles should stop reading as a visible square grid. Solid terrain remains tile-based internally, but the art should read as underworld space cave mass: dark basalt/ancient chunks with irregular silhouettes, low-contrast internal texture, soft edge scars, and ore embedded into the rock. Avoid repeated nested square outlines on every breakable tile.
 
-Normal gameplay UI should be stripped back. Keep a small objective chip, compact hull/heat strips, art-based cargo row, blast/dash/bank controls, score, boss bar, dock prompt, and minimap. Remove redundant territory/order labels from persistent HUD where the current objective and icon progress already communicate the mission.
+Normal gameplay UI should be stripped back. Keep a small objective chip, compact hull/heat strips, art-based cargo row, blast/dash/store controls, score, boss bar, Store prompt, and minimap. Remove redundant territory/order labels from persistent HUD where the current objective and icon progress already communicate the mission.
+
+## Semi-Open Progression, Unlocks, And Contract Fix Pass
+
+Runs should now feel semi-open instead of like a fully visible fixed-size level. The first version keeps one generated map loaded per run, but makes that map larger, branchier, and deeper. Streaming chunks are later scope. The Shimmer Veins should support long side pockets, vertical faults, deeper ore bands, and late-run boss pressure while keeping spawn readable near the starting pocket.
+
+The cave should be darker. The player ship is the primary readable light source: nearby walls, ore, enemies, pickups, hazards, and objective highlights remain readable, while distant terrain falls into darkness. The minimap stays local and player-centered and must not reveal the whole run.
+
+Mining durability should follow ore value. Ferrite breaks quickly, Shimmer takes longer, Voltaic is meaningfully tough, and Aetherium is the slow rare target. Basalt should stay usable for traversal; ore hardness should create progression pressure without making basic cave movement tedious.
+
+The economy shifts from only stat upgrades to hybrid unlock progression. The player stores mineables through the summoned Store shuttle, cargo exchange banks the value into credits, and the service bay sells meaningful modules. The default ship starts with only the basic drill-shot. Dash, shield, and right-click swarm blast are unlockables. Stronger weapon modules and boss-tier tools can be gated by completed contracts before they become purchasable.
+
+The first complete unlock tier includes:
+
+- Dash Module: restores the existing emergency dash after purchase.
+- Shield Emitter: adds a short defensive shield with its own cooldown and break state.
+- Swarm Blast: unlocks the existing right-click burst swarm.
+- Piercer weapon: a slower, harder-hitting drill-shot for tough ore and armored targets.
+- Scatter weapon: a close-range multi-shot weapon for pressure clearing.
+
+Contracts replace weak checklist-style tasks. A contract has explicit steps: gather required ore, Store/bank the required materials into contract storage, craft the required item if needed, defeat a boss if required, then Store/finalize completion. Progress must persist after Store, crafting, and boss events. HUD guidance should always show the next practical step, and the service bay should show missing materials, craft readiness, boss requirements, and completion state.
+
+Combat growth should be focused, not broad prototype sprawl. Add one more complex enemy archetype and one additional boss for this pass, with config and progression structures ready for more later.
+
+The first polish pass after unlocks should remove beam-like enemy/boss attacks. Voltrix, Sentinel-style bosses, and Phase Mites should fire visible projectile bullets/orbs with readable travel time instead of instant line strikes. Persistent controls should only show tools the player actually owns, with unavailable modules discoverable in the service bay. The service bay should be compact and tabbed: upgrades, unlocks/weapons, and workshop/cargo must be separate views instead of one tall cluttered page. Task HUD feedback should show live progress and a short completion pulse when a contract part finishes.
+
+The screen-space darkness must cover the full viewport without visible texture cut lines. Use an oversized diagonal-fit vignette so corners darken consistently on wide screens and no left/right strip appears outside the overlay.
+
+Enemies should obey cave collision and movement physics. Patrol, chase, dash, and boss movement must resolve against solid tiles instead of passing through terrain; wall hits should stop, bounce, or redirect the enemy depending on behavior. Enemy projectiles may collide with terrain, but enemy bodies should remain in navigable cave space.
+
+The service bay must have a visible close control and every purchasable module should have a compact visual icon. Use local icon shapes or existing generated art first; online image assets are not required for the current HUD scale.
+
+Closing the post-run service bay should return the player to active play by starting the next run. It should not merely hide the panel because the previous run is already finished and cannot resume.
+
+Enemy and boss spawns must validate open, collision-clear cave space before placement. Clamped coordinates are not enough; boss breakout should search around the player for a valid open pocket and fall back to spawn only if no valid combat space exists.
+
+Mission intro banners should never show placeholder copy. Keep the banner hidden until the active task, territory, material list, and first action text have been rendered.
+
+Ore and upgrade economy should be material-driven as well as credit-driven. Stored ore enters a persistent stockpile. Upgrade purchases require credits plus authored ore counts: early levels lean on Ferrite and small Shimmer amounts, mid levels introduce Voltaic, and late levels can require Aetherium. Ore generation density should follow rarity, with Ferrite common and easy, Shimmer moderate, Voltaic rare/tough, and Aetherium very rare/deep/hard.
+
+Boss defeat should feel resolved immediately. When a boss dies, its health bar must disappear, a short on-screen confirmation should name the defeated boss, and the cave should drop valuable reward ore at the boss position so victory feeds the same cargo/extraction economy.
+
+Mouse aim must be derived from the current screen pointer through the active main camera every frame. Do not rely on cached pointer world coordinates, because the player-follow camera moves while the mouse can stay still; stale world aim makes the ship chase an old point and causes movement jitter.
+
+When the player has enough banked credits and materials for an upgrade or enough credits for a shop unlock, the HUD should surface one compact purchase suggestion. The prompt should name the highest-priority available item, such as "Dash Module available to unlock", and point the player toward the service bay without covering the center playfield.
+
+The fixed extraction point is replaced by an on-demand Store call. Pressing Store summons a small service shuttle near the player, sells the whole current cargo load into account credit and persistent material stock, and opens the service bay over the paused current run. Closing that service bay resumes the same cave instead of forcing a new run. Destroyed runs can still use the same service bay shell, but close/new-run behavior remains run-ending.
+
+Upgrade and unlock icons should use reliable SVG icon markup in the HUD, following a Lucide-style stroke language, instead of fragile CSS pseudo-element drawings. Icons must stay readable at the compact service-bay size and should map clearly to weapon output, cooling, cargo magnet, hull, engine, dash, shield, swarm, piercer, scatter, and drill shot.

@@ -2,8 +2,8 @@ import { BLOCK_CONFIG, ENEMY_CONFIG, MAP_VARIANTS, TERRITORY_CONFIG } from "../c
 import { TILE_SIZE, type BlockId, type EnemyState, type MapVariantId, type TerritoryId, type TileState, type WorldState } from "./types";
 import { coordNoise } from "./random";
 
-const WORLD_WIDTH = 184;
-const WORLD_HEIGHT = 88;
+const WORLD_WIDTH = 292;
+const WORLD_HEIGHT = 132;
 const MAX_ORE_DEPTH_FROM_OPEN = 4;
 
 interface WorldShapeProfile {
@@ -34,8 +34,8 @@ const ORE_CLUSTER_RULES: OreClusterRule[] = [
   {
     type: "aetherium",
     salt: 820,
-    threshold: 0.996,
-    minX: 96,
+    threshold: 0.998,
+    minX: 188,
     minDepth: 3,
     maxDepth: 4,
     minYRatio: 0.58,
@@ -44,8 +44,8 @@ const ORE_CLUSTER_RULES: OreClusterRule[] = [
   {
     type: "voltaic",
     salt: 720,
-    threshold: 0.987,
-    minX: 42,
+    threshold: 0.991,
+    minX: 92,
     minDepth: 2,
     maxDepth: 4,
     radius: 2
@@ -53,8 +53,8 @@ const ORE_CLUSTER_RULES: OreClusterRule[] = [
   {
     type: "shimmer",
     salt: 620,
-    threshold: 0.968,
-    minX: 18,
+    threshold: 0.972,
+    minX: 28,
     minDepth: 1,
     maxDepth: 3,
     radius: 2
@@ -62,7 +62,7 @@ const ORE_CLUSTER_RULES: OreClusterRule[] = [
   {
     type: "ferrite",
     salt: 520,
-    threshold: 0.948,
+    threshold: 0.936,
     minX: 8,
     minDepth: 1,
     maxDepth: 2,
@@ -78,7 +78,7 @@ export function createWorld(seed: string, territory: TerritoryId = "shimmerVeins
   const variantConfig = MAP_VARIANTS[safeVariant];
   const shape = createWorldShapeProfile(seed);
   const spawnTile = {
-    x: 36,
+    x: 42,
     y: clampTile(Math.floor(WORLD_HEIGHT * 0.48 + variantConfig.centerShift * 0.35 + shape.spawnJitterY), 14, WORLD_HEIGHT - 15)
   };
 
@@ -134,7 +134,7 @@ export function createInitialEnemies(world: WorldState): EnemyState[] {
     const positionRoll = coordNoise(world.seed, x, 19, 206);
     const enemyX = Math.min(world.width - 17, Math.max(3, x + Math.round((positionRoll - 0.5) * 7)));
     const roll = coordNoise(world.seed, enemyX, 17, 200);
-    const kind = roll < 0.28 ? "arcWarden" : roll < 0.66 ? "prismStalker" : "sparkSac";
+    const kind = roll < 0.22 ? "arcWarden" : roll < 0.52 ? "prismStalker" : roll < 0.78 ? "sparkSac" : "phaseMite";
     const y = findOpenY(world, enemyX, coordNoise(world.seed, enemyX, id, 207));
     x += stepBase + Math.floor(stepRoll * 5);
 
@@ -148,17 +148,23 @@ export function createInitialEnemies(world: WorldState): EnemyState[] {
     }
 
     const config = ENEMY_CONFIG[kind];
+    const xWorld = enemyX * TILE_SIZE + TILE_SIZE / 2;
+    const yWorld = y * TILE_SIZE + TILE_SIZE / 2;
+    if (!isEnemySpawnClear(world, xWorld, yWorld, config.radius)) {
+      continue;
+    }
+
     const timerRoll = coordNoise(world.seed, enemyX, y, 208);
     const directionRoll = coordNoise(world.seed, y, enemyX, 209);
     enemies.push({
       id: `enemy-${id}`,
       kind,
-      x: enemyX * TILE_SIZE + TILE_SIZE / 2,
-      y: y * TILE_SIZE + TILE_SIZE / 2,
+      x: xWorld,
+      y: yWorld,
       vx: 0,
       vy: 0,
-      anchorX: enemyX * TILE_SIZE + TILE_SIZE / 2,
-      anchorY: y * TILE_SIZE + TILE_SIZE / 2,
+      anchorX: xWorld,
+      anchorY: yWorld,
       health: config.health,
       maxHealth: config.health,
       radius: config.radius,
@@ -198,6 +204,30 @@ export function worldBounds(world: WorldState): { width: number; height: number 
   };
 }
 
+function isEnemySpawnClear(world: WorldState, x: number, y: number, radius: number): boolean {
+  const minX = Math.floor((x - radius) / TILE_SIZE);
+  const maxX = Math.floor((x + radius) / TILE_SIZE);
+  const minY = Math.floor((y - radius) / TILE_SIZE);
+  const maxY = Math.floor((y + radius) / TILE_SIZE);
+  for (let tileY = minY; tileY <= maxY; tileY += 1) {
+    for (let tileX = minX; tileX <= maxX; tileX += 1) {
+      if (isSolid(getTile(world, tileX, tileY))) {
+        return false;
+      }
+    }
+  }
+
+  const centerTileX = Math.floor(x / TILE_SIZE);
+  const centerTileY = Math.floor(y / TILE_SIZE);
+  let openNeighbors = 0;
+  for (const neighbor of getCardinalNeighbors(centerTileX, centerTileY)) {
+    if (!isSolid(getTile(world, neighbor.x, neighbor.y))) {
+      openNeighbors += 1;
+    }
+  }
+  return openNeighbors >= 2;
+}
+
 function createWorldShapeProfile(seed: string): WorldShapeProfile {
   return {
     centerPhaseA: coordNoise(seed, 0, 0, 401) * Math.PI * 2,
@@ -230,9 +260,13 @@ function carveCaveShape(seed: string, tiles: TileState[], spawn: { x: number; y:
       const branchCenter = center + Math.sin(x * 0.18 + branchSeed * 6 + shape.branchPhase) * (18 + territoryConfig.depthBias * 0.25);
       const branchNoise = coordNoise(seed, Math.floor((x + shape.pocketOffsetY) / 8), Math.floor((y + shape.pocketOffsetX) / 5), 121);
       const sideBranch = x > spawn.x + 16 && branchNoise > variantConfig.branchThreshold && Math.abs(y - branchCenter) < 3.4;
+      const deepPocketNoise = coordNoise(seed, Math.floor((x + shape.faultOffset) / 6), Math.floor((y + shape.pocketOffsetY) / 6), 151);
+      const deepPocket = x > spawn.x + 54 && deepPocketNoise > 0.84 && Math.abs(y - center) < 42;
+      const longShaftNoise = coordNoise(seed, Math.floor((x + shape.pocketOffsetX) / 10), 0, 161);
+      const longShaft = x > spawn.x + 34 && longShaftNoise > 0.9 && Math.abs(y - center) < 44;
       const nearSpawn = Math.abs(x - spawn.x) < 8 && Math.abs(y - spawn.y) < 7;
 
-      if (nearSpawn || mainTunnel || pocket || verticalFault || sideBranch) {
+      if (nearSpawn || mainTunnel || pocket || verticalFault || sideBranch || deepPocket || longShaft) {
         setTileType(tiles, x, y, "empty", seed);
       }
     }

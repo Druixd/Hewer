@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">HEWER favicon</title>
+  <desc id="desc">Readable HEWER H mark with warm mining ship colors.</desc>
+  <rect width="64" height="64" rx="10" fill="#060708"/>
+  <path d="M8 12 16 6h32l8 6v40l-8 6H16l-8-6V12Z" fill="#0c0a08"/>
+  <path d="M10 14 17 9h30l7 5v36l-7 5H17l-7-5V14Z" fill="#151a28"/>
+  <path d="M13 17 19 13h26l6 4v30l-6 4H19l-6-4V17Z" fill="#0b0e16"/>
+  <path d="M14 18 20 14h24l6 4v9H39V22h-6v20h6v-6h11v10l-6 4H20l-6-4V36h11v6h6V22h-6v5H14v-9Z" fill="#e8d8b4"/>
+  <path d="M14 27h11v9H14v-9Zm25 0h11v9H39v-9Z" fill="#d4845a"/>
+  <path d="M31 23h2v18h-2V23Zm-13 8h28v2H18v-2Z" fill="#060708" opacity=".75"/>
+  <path d="M20 14h24l6 4v4H39v-1h-6v20h6v-5h11v10l-6 4H20l-6-4v-4h11v1h8V21h-8v1H14v-4l6-4Z" fill="none" stroke="#5ab8a8" stroke-width="2"/>
+  <path d="M22 9h20" stroke="#d4845a" stroke-width="2" stroke-linecap="square"/>
+  <path d="M22 55h20" stroke="#d4845a" stroke-width="2" stroke-linecap="square"/>
+</svg>

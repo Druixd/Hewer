@@ -8,6 +8,7 @@ export function createEmptyActions(): InputActions {
     secondaryAbility: false,
     secondaryPressed: false,
     dashPressed: false,
+    shieldPressed: false,
     toggleIntensityPressed: false,
     pausePressed: false,
     extractPressed: false

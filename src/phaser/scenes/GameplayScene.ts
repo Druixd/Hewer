@@ -7,14 +7,17 @@ import {
   bankRunResult,
   canCraftActiveTask,
   createRunSeed,
+  effectiveStats,
   loadProgress,
   prepareProgressForNewRun,
+  tryBuyUnlock,
   tryBuyUpgrade,
-  tryCraftActiveTask
+  tryCraftActiveTask,
+  tryEquipWeapon
 } from "../../game/simulation/systems/progression";
 import { updateGame } from "../../game/simulation/systems/update";
 import { coordNoise } from "../../game/simulation/random";
-import { TILE_SIZE, type BlockId, type GameEvent, type GameState, type InputActions, type UpgradeState } from "../../game/simulation/types";
+import { TILE_SIZE, type BlockId, type GameEvent, type GameState, type InputActions, type UnlockId, type UpgradeState, type WeaponId } from "../../game/simulation/types";
 import { getTile, isSolid, worldBounds } from "../../game/simulation/world";
 import { getHudController } from "../../ui/hud/HudController";
 
@@ -63,6 +66,10 @@ export class GameplayScene extends Phaser.Scene {
   private extractionGlow!: Phaser.GameObjects.Image;
   private audioFeedback!: GameplayAudio;
   private wasRightDown = false;
+  private screenWidth = 0;
+  private screenHeight = 0;
+  private pendingStoreResultAt = 0;
+  private storeShuttle: Phaser.GameObjects.Image | null = null;
 
   constructor() {
     super("GameplayScene");
@@ -81,6 +88,10 @@ export class GameplayScene extends Phaser.Scene {
     this.isPaused = false;
     this.lastTrailTime = 0;
     this.wasRightDown = false;
+    this.screenWidth = 0;
+    this.screenHeight = 0;
+    this.pendingStoreResultAt = 0;
+    this.storeShuttle = null;
 
     this.input.mouse?.disableContextMenu();
     this.keys = this.input.keyboard!.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,SHIFT,ESC,E") as KeyMap;
@@ -114,10 +125,12 @@ export class GameplayScene extends Phaser.Scene {
     }
 
     if (this.isPaused) {
+      this.maybeShowRunResult(hud);
       return;
     }
 
     const dt = Math.min(deltaMs / 1000, 0.034);
+    this.syncScreenSpaceLayout();
     const actions = this.collectActions();
     updateGame(this.state, actions, dt);
 
@@ -130,11 +143,21 @@ export class GameplayScene extends Phaser.Scene {
     this.handleEvents(this.state.events);
     hud.update(this.state, this.progress);
 
-    if (this.state.runResult && !this.resultBanked) {
-      this.resultBanked = true;
-      this.progress = bankRunResult(this.progress, this.state.runResult);
-      hud.showRunSummary(this.state.runResult, this.progress);
+    this.maybeShowRunResult(hud);
+  }
+
+  private maybeShowRunResult(hud = getHudController()): void {
+    if (!this.state.runResult || this.resultBanked) {
+      return;
     }
+    if (this.state.runResult.mode === "store" && this.time.now < this.pendingStoreResultAt) {
+      return;
+    }
+
+    this.resultBanked = true;
+    this.progress = bankRunResult(this.progress, this.state.runResult);
+    this.state.upgrades = this.progress;
+    hud.showRunSummary(this.state.runResult, this.progress);
   }
 
   private drawMinimap(): void {
@@ -178,11 +201,6 @@ export class GameplayScene extends Phaser.Scene {
       if (this.isInMinimapRange(enemy.x, enemy.y)) {
         this.minimapGraphics.fillCircle(enemy.x, enemy.y, 24);
       }
-    }
-
-    if (this.isInMinimapRange(this.state.world.extraction.x, this.state.world.extraction.y)) {
-      this.minimapGraphics.fillStyle(0x5ab8a8, 0.90);
-      this.minimapGraphics.fillCircle(this.state.world.extraction.x, this.state.world.extraction.y, 28);
     }
 
     this.minimapGraphics.fillStyle(0xe8c86a, 1);
@@ -381,17 +399,16 @@ export class GameplayScene extends Phaser.Scene {
       .setDepth(18)
       .setOrigin(0.5)
       .setScrollFactor(0)
-      .setAlpha(0.9);
+      .setAlpha(1);
     this.fitVisibilityVignette(this.scale.width, this.scale.height);
     this.scale.on("resize", (gameSize: Phaser.Structs.Size) => {
-      this.moodOverlay.setSize(gameSize.width, gameSize.height);
-      this.fitVisibilityVignette(gameSize.width, gameSize.height);
+      this.syncScreenSpaceLayout(gameSize.width, gameSize.height);
     });
     this.extractionGlow = this.add.image(this.state.world.extraction.x, this.state.world.extraction.y, "fx.glow.radial")
       .setDepth(6)
       .setOrigin(0.5)
       .setScale(1.35)
-      .setAlpha(0.32)
+      .setAlpha(0)
       .setTint(0x5ab8a8)
       .setBlendMode(Phaser.BlendModes.ADD);
     this.playerLight = this.add.image(this.state.player.x, this.state.player.y, "fx.glow.radial")
@@ -464,6 +481,7 @@ export class GameplayScene extends Phaser.Scene {
 
     // Handle resizing positions dynamically
     this.scale.on("resize", (gameSize: Phaser.Structs.Size) => {
+      this.cameras.main.setViewport(0, 0, gameSize.width, gameSize.height);
       this.minimap.setPosition(gameSize.width - MINIMAP_SIZE - MINIMAP_MARGIN, gameSize.height - MINIMAP_SIZE - MINIMAP_MARGIN);
     });
   }
@@ -477,7 +495,25 @@ export class GameplayScene extends Phaser.Scene {
         this.scene.restart({ seed: createRunSeed(this.progress) });
       },
       buyUpgrade: (id) => {
+        const previousMaxHull = this.state.player.maxHull;
         this.progress = tryBuyUpgrade(this.progress, id);
+        this.state.upgrades = this.progress;
+        this.state.stats = effectiveStats(this.progress);
+        this.state.player.maxHull = this.state.stats.maxHull;
+        if (this.state.player.maxHull > previousMaxHull) {
+          this.state.player.hull += this.state.player.maxHull - previousMaxHull;
+        }
+        return this.progress;
+      },
+      buyUnlock: (id: UnlockId) => {
+        this.progress = tryBuyUnlock(this.progress, id);
+        this.state.upgrades = this.progress;
+        return this.progress;
+      },
+      equipWeapon: (id: WeaponId) => {
+        this.progress = tryEquipWeapon(this.progress, id);
+        this.state.upgrades = this.progress;
+        this.state.events.push({ type: "weapon-switched", x: this.state.player.x, y: this.state.player.y, color: 0xe8c86a });
         return this.progress;
       },
       craftObjective: () => {
@@ -496,6 +532,20 @@ export class GameplayScene extends Phaser.Scene {
       resume: () => {
         this.isPaused = false;
         hud.setPaused(false);
+      },
+      closeSummary: (result) => {
+        hud.hideRunSummary();
+        if (result?.mode === "store") {
+          this.state.runResult = null;
+          this.resultBanked = false;
+          this.pendingStoreResultAt = 0;
+          this.isPaused = false;
+          this.spawnGlowPulse(this.state.player.x, this.state.player.y, 0x5ab8a8, 1.05, 180);
+          return;
+        }
+
+        this.progress = prepareProgressForNewRun(this.progress);
+        this.scene.restart({ seed: createRunSeed(this.progress) });
       }
     });
     hud.update(this.state, this.progress);
@@ -509,17 +559,43 @@ export class GameplayScene extends Phaser.Scene {
     }
 
     this.visibilityVignette.setPosition(width / 2, height / 2);
-    this.visibilityVignette.setDisplaySize(width * 1.18, height * 1.18);
+    const cover = Math.hypot(width, height) * 1.32;
+    this.visibilityVignette.setDisplaySize(cover, cover);
+  }
+
+  private syncScreenSpaceLayout(width = Math.max(this.scale.width, window.innerWidth), height = Math.max(this.scale.height, window.innerHeight)): void {
+    if (Math.abs(this.scale.width - window.innerWidth) > 1 || Math.abs(this.scale.height - window.innerHeight) > 1) {
+      this.scale.resize(window.innerWidth, window.innerHeight);
+      width = window.innerWidth;
+      height = window.innerHeight;
+    }
+
+    if (width === this.screenWidth && height === this.screenHeight) {
+      return;
+    }
+
+    this.screenWidth = width;
+    this.screenHeight = height;
+    this.cameras.main.setViewport(0, 0, width, height);
+    this.moodOverlay?.setSize(width, height);
+    this.fitVisibilityVignette(width, height);
+    this.minimap?.setPosition(width - MINIMAP_SIZE - MINIMAP_MARGIN, height - MINIMAP_SIZE - MINIMAP_MARGIN);
+  }
+
+  private currentAimWorldPoint(): Phaser.Math.Vector2 {
+    const pointer = this.input.activePointer;
+    return this.cameras.main.getWorldPoint(pointer.x, pointer.y);
   }
 
   private collectActions(): InputActions {
     const actions = createEmptyActions();
     const pointer = this.input.activePointer;
+    const aim = this.currentAimWorldPoint();
     const player = this.state.player;
 
     const forwardFromPointer = {
-      x: pointer.worldX - player.x,
-      y: pointer.worldY - player.y
+      x: aim.x - player.x,
+      y: aim.y - player.y
     };
     const forwardLength = Math.hypot(forwardFromPointer.x, forwardFromPointer.y);
     const forward = forwardLength > 1
@@ -546,13 +622,14 @@ export class GameplayScene extends Phaser.Scene {
           y: move.y / moveLength
         }
       : move;
-    actions.aim = { x: pointer.worldX, y: pointer.worldY };
+    actions.aim = { x: aim.x, y: aim.y };
     actions.primaryFire = pointer.leftButtonDown();
     const rightDown = pointer.rightButtonDown();
     actions.secondaryAbility = rightDown;
     actions.secondaryPressed = rightDown && !this.wasRightDown;
     this.wasRightDown = rightDown;
     actions.dashPressed = Phaser.Input.Keyboard.JustDown(this.keys.SHIFT);
+    actions.shieldPressed = Phaser.Input.Keyboard.JustDown(this.keys.SPACE);
     actions.toggleIntensityPressed = false;
     actions.pausePressed = false;
     actions.extractPressed = Phaser.Input.Keyboard.JustDown(this.keys.E);
@@ -571,11 +648,9 @@ export class GameplayScene extends Phaser.Scene {
     const lightPulse = Math.sin(this.state.elapsed * 3.2) * 0.025;
     this.playerLight.setScale((player.invulnerableTimer > 0 ? 4.8 : 4.1) + movementGlow);
     this.playerLight.setAlpha((player.invulnerableTimer > 0 ? 0.46 : 0.34) + movementGlow * 0.36 + lightPulse);
-    this.reticle.setPosition(this.input.activePointer.worldX, this.input.activePointer.worldY);
-    const extractionDistance = Math.hypot(player.x - this.state.world.extraction.x, player.y - this.state.world.extraction.y);
-    const extractionPulse = extractionDistance <= 96 ? 0.48 : 0.22 + Math.sin(this.state.elapsed * 2.4) * 0.06;
-    this.extractionGlow.setAlpha(extractionPulse);
-    this.extractionGlow.setScale(extractionDistance <= 96 ? 1.75 : 1.35);
+    const aim = this.currentAimWorldPoint();
+    this.reticle.setPosition(aim.x, aim.y);
+    this.extractionGlow.setAlpha(0);
 
     if (speed > 35 && this.time.now - this.lastTrailTime > 24) {
       this.lastTrailTime = this.time.now;
@@ -587,6 +662,37 @@ export class GameplayScene extends Phaser.Scene {
     this.syncProjectiles();
     this.syncBombs();
     this.syncBoss();
+    this.updateLocalVisibility();
+  }
+
+  private updateLocalVisibility(): void {
+    const player = this.state.player;
+    const inner = 230;
+    const outer = 760;
+
+    const alphaFor = (x: number, y: number, minAlpha: number, maxAlpha: number) => {
+      const dist = Math.hypot(x - player.x, y - player.y);
+      const t = Phaser.Math.Clamp((dist - inner) / (outer - inner), 0, 1);
+      return Phaser.Math.Linear(maxAlpha, minAlpha, t);
+    };
+
+    for (let index = 0; index < this.tileSprites.length; index += 1) {
+      const sprite = this.tileSprites[index];
+      if (!sprite?.visible) {
+        continue;
+      }
+      const tile = this.state.world.tiles[index];
+      const maxAlpha = tile.type === "ancient" ? 0.88 : tile.type === "basalt" ? 0.92 : 1;
+      sprite.setAlpha(alphaFor(sprite.x, sprite.y, tile.type === "basalt" || tile.type === "ancient" ? 0.035 : 0.09, maxAlpha));
+      const glows = this.tileGlows[index];
+      glows?.forEach((glow) => glow.setAlpha(alphaFor(glow.x, glow.y, 0.01, tile.type === "basalt" ? 0.08 : 0.28)));
+    }
+
+    this.enemySprites.forEach((sprite) => sprite.setAlpha(alphaFor(sprite.x, sprite.y, 0.18, 1)));
+    this.enemyGlowSprites.forEach((sprite) => sprite.setAlpha(alphaFor(sprite.x, sprite.y, 0.04, 0.42)));
+    this.pickupSprites.forEach((sprite) => sprite.setAlpha(alphaFor(sprite.x, sprite.y, 0.2, 1)));
+    this.pickupGlowSprites.forEach((sprite) => sprite.setAlpha(alphaFor(sprite.x, sprite.y, 0.04, 0.52)));
+    this.caveEdgeGraphics?.setAlpha(alphaFor(player.x, player.y, 0.48, 0.78));
   }
 
   private updateMoodPresentation(): void {
@@ -601,7 +707,7 @@ export class GameplayScene extends Phaser.Scene {
     } else if (this.state.threat.mood === "waking") {
       this.moodOverlay.setFillStyle(0x1a1228, 0.055 + Math.sin(this.state.elapsed * 3) * 0.014);
     } else {
-      this.moodOverlay.setFillStyle(0x000000, 0);
+      this.moodOverlay.setFillStyle(0x000000, 0.1);
     }
   }
 
@@ -738,8 +844,8 @@ export class GameplayScene extends Phaser.Scene {
           .setBlendMode(Phaser.BlendModes.ADD);
         const core = this.add.image(projectile.x, projectile.y, TEXTURES.particleAmber)
           .setDepth(16)
-          .setTint(0xf0e4cc)
-          .setScale(1.15)
+          .setTint(projectile.owner === "enemy" ? projectile.color : 0xf0e4cc)
+          .setScale(projectile.owner === "enemy" ? 1.35 : 1.15)
           .setBlendMode(Phaser.BlendModes.ADD);
         sprites = { core, glow };
         this.projectileSprites.set(projectile.id, sprites);
@@ -751,11 +857,11 @@ export class GameplayScene extends Phaser.Scene {
       const life = 1 - projectile.age / projectile.lifetime;
       sprites.core.setPosition(projectile.x, projectile.y);
       sprites.core.setRotation(angle);
-      sprites.core.setScale(1.05 + life * 0.28, 0.72);
+      sprites.core.setScale(projectile.owner === "enemy" ? 0.9 + life * 0.42 : 1.05 + life * 0.28, projectile.owner === "enemy" ? 0.9 + life * 0.42 : 0.72);
       sprites.core.setAlpha(0.72 + life * 0.28);
       sprites.glow.setPosition(projectile.x, projectile.y);
-      sprites.glow.setScale(0.34 + life * 0.32);
-      sprites.glow.setAlpha(0.18 + life * 0.42);
+      sprites.glow.setScale(projectile.owner === "enemy" ? 0.55 + life * 0.42 : 0.34 + life * 0.32);
+      sprites.glow.setAlpha(projectile.owner === "enemy" ? 0.28 + life * 0.5 : 0.18 + life * 0.42);
     }
 
     for (const [id, sprites] of this.projectileSprites) {
@@ -900,6 +1006,13 @@ export class GameplayScene extends Phaser.Scene {
 
   private drawEnemyFields(): void {
     this.fieldGraphics.clear();
+    if (this.state.player.shieldActiveTimer > 0 && this.state.player.shield > 0) {
+      const shieldRatio = this.state.player.shield / this.state.player.shieldMax;
+      this.fieldGraphics.lineStyle(3, 0x5ab8a8, 0.42 + shieldRatio * 0.28);
+      this.fieldGraphics.strokeCircle(this.state.player.x, this.state.player.y, 34 + Math.sin(this.state.elapsed * 12) * 2);
+      this.fieldGraphics.fillStyle(0x5ab8a8, 0.035 + shieldRatio * 0.035);
+      this.fieldGraphics.fillCircle(this.state.player.x, this.state.player.y, 34);
+    }
     for (const enemy of this.state.enemies) {
       if (enemy.kind !== "arcWarden") {
         continue;
@@ -1026,6 +1139,25 @@ export class GameplayScene extends Phaser.Scene {
         this.spawnGlowPulse(event.x, event.y, event.color, 1.35, 190);
       }
 
+      if (event.type === "ability-locked") {
+        this.audioFeedback.play("craftBlocked");
+        this.spawnGlowPulse(event.x, event.y, event.color, 0.55, 120);
+      }
+
+      if (event.type === "shield-activated") {
+        this.audioFeedback.play("objectiveComplete");
+        this.spawnGlowPulse(event.x, event.y, event.color, 1.45, 220);
+      }
+
+      if (event.type === "shield-broken") {
+        this.audioFeedback.play("damage");
+        this.spawnGlowPulse(event.x, event.y, event.color, 1.1, 150);
+      }
+
+      if (event.type === "weapon-switched") {
+        this.audioFeedback.play("objectiveFocus");
+      }
+
       if (event.type === "swarm-bomb-fired") {
         this.spawnBurst(event.x, event.y, event.color, 8, 92);
         this.spawnGlowPulse(event.x, event.y, event.color, 1.1, 150);
@@ -1052,6 +1184,7 @@ export class GameplayScene extends Phaser.Scene {
       if (event.type === "boss-defeated") {
         this.audioFeedback.play("bossDefeat");
         this.spawnBurst(event.x, event.y, event.color, 44, 360);
+        this.showBossDefeatNotice();
         this.cameras.main.flash(320, 232, 216, 180, false);
         this.cameras.main.shake(620, 0.014);
       }
@@ -1073,6 +1206,13 @@ export class GameplayScene extends Phaser.Scene {
       if (event.type === "craft-ready" || event.type === "extract-ready") {
         this.audioFeedback.play("objectiveComplete");
         this.spawnGlowPulse(event.x, event.y, event.color, 1.2, 210);
+      }
+
+      if (event.type === "store-called") {
+        this.audioFeedback.play("objectiveComplete");
+        this.pendingStoreResultAt = this.time.now + 720;
+        this.isPaused = true;
+        this.spawnStoreShuttle(event.x, event.y);
       }
 
       if (event.type === "enemy-wave-started") {
@@ -1121,6 +1261,79 @@ export class GameplayScene extends Phaser.Scene {
         onComplete: () => particle.destroy()
       });
     }
+  }
+
+  private showBossDefeatNotice(): void {
+    const bossName = this.state.boss.kind === "sentinelEye" ? "SENTINEL EYE" : "VOLTRIX CORE";
+    const notice = this.add.text(this.scale.width / 2, this.scale.height * 0.22, `${bossName} DEFEATED\nReward ore released`, {
+      fontFamily: "system-ui, sans-serif",
+      fontSize: "18px",
+      fontStyle: "900",
+      color: "#f7df9e",
+      align: "center",
+      stroke: "#120b08",
+      strokeThickness: 5
+    })
+      .setDepth(80)
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setAlpha(0);
+
+    this.tweens.add({
+      targets: notice,
+      alpha: 1,
+      y: this.scale.height * 0.2,
+      duration: 160,
+      ease: "Quad.easeOut",
+      yoyo: true,
+      hold: 1200,
+      onComplete: () => notice.destroy()
+    });
+  }
+
+  private spawnStoreShuttle(x: number, y: number): void {
+    this.storeShuttle?.destroy();
+    const startX = x - 260;
+    const startY = y - 160;
+    const dockX = x - 54;
+    const dockY = y - 42;
+    const shuttle = this.add.image(startX, startY, TEXTURES.ship)
+      .setDepth(32)
+      .setScale(0.58)
+      .setAlpha(0)
+      .setRotation(Math.atan2(dockY - startY, dockX - startX))
+      .setTint(0x9fe8d8)
+      .setBlendMode(Phaser.BlendModes.ADD);
+
+    this.storeShuttle = shuttle;
+    this.minimap?.ignore(shuttle);
+    this.spawnGlowPulse(dockX, dockY, 0x5ab8a8, 0.95, 220);
+
+    this.tweens.add({
+      targets: shuttle,
+      x: dockX,
+      y: dockY,
+      alpha: 0.96,
+      scale: 0.78,
+      duration: 520,
+      ease: "Cubic.easeOut",
+      onComplete: () => {
+        this.spawnGlowPulse(dockX, dockY, 0x5ab8a8, 1.45, 240);
+        this.tweens.add({
+          targets: shuttle,
+          alpha: 0,
+          scale: 0.52,
+          duration: 210,
+          ease: "Quad.easeIn",
+          onComplete: () => {
+            if (this.storeShuttle === shuttle) {
+              this.storeShuttle = null;
+            }
+            shuttle.destroy();
+          }
+        });
+      }
+    });
   }
 
   private spawnGlowPulse(x: number, y: number, color: number, scale: number, duration: number): void {
@@ -1427,6 +1640,9 @@ function enemyGlowColor(kind: string): number {
   }
   if (kind === "prismStalker") {
     return 0xc47a8a;
+  }
+  if (kind === "phaseMite") {
+    return 0xe8c86a;
   }
   return 0x5ab8a8;
 }

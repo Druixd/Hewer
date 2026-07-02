@@ -37,6 +37,10 @@ export function createGameState(seed: string, upgrades: UpgradeState): GameState
       blastCharges: 3,
       blastRepeatCooldown: 0,
       blastRechargeTimer: 0,
+      shield: 0,
+      shieldMax: 64,
+      shieldActiveTimer: 0,
+      shieldCooldown: 0,
       objectiveWaveCooldown: 0,
       invulnerableTimer: 0,
       collectionPulse: 0
@@ -56,6 +60,7 @@ export function createGameState(seed: string, upgrades: UpgradeState): GameState
     projectiles: [],
     bombs: [],
     boss: {
+      kind: activeTask?.bossAchievement ?? "voltrixCore",
       active: false,
       defeated: false,
       health: 420,
@@ -103,6 +108,7 @@ export function finishRun(state: GameState, outcome: RunOutcome): void {
   const voltrixCore = state.boss.defeated;
   const inventory = { ...state.inventory };
   const result = {
+    mode: "run-end" as const,
     outcome,
     inventory,
     minedBlocks: state.minedBlocks,
@@ -118,4 +124,29 @@ export function finishRun(state: GameState, outcome: RunOutcome): void {
   state.status = outcome;
   state.runResult = result;
   state.beam.active = false;
+}
+
+export function storeCargo(state: GameState): boolean {
+  if (state.status !== "playing" || state.runResult) {
+    return false;
+  }
+
+  const voltrixCore = state.boss.defeated;
+  const inventory = { ...state.inventory };
+  state.runResult = {
+    mode: "store",
+    outcome: "extracted",
+    inventory,
+    minedBlocks: state.minedBlocks,
+    enemiesKilled: state.enemiesKilled,
+    duration: state.elapsed,
+    creditsEarned: calculateRunValue({ inventory, voltrixCore }),
+    voltrixCore,
+    taskCompleted: Boolean(state.upgrades.activeTask?.completed),
+    activeTaskId: state.upgrades.activeTask?.taskId ?? null,
+    bossAchievement: voltrixCore ? "voltrixCore" : null
+  };
+  state.inventory = createEmptyInventory();
+  state.beam.active = false;
+  return true;
 }

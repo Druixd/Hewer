@@ -1,13 +1,16 @@
-import { CRAFT_RECIPES, ORE_CONFIG, ORG_TASKS, TERRITORY_CONFIG, UPGRADE_CONFIG, upgradeCost } from "../../game/content/config";
+import { CRAFT_RECIPES, ORE_CONFIG, ORG_TASKS, TERRITORY_CONFIG, UNLOCK_CONFIG, UPGRADE_CONFIG, WEAPON_CONFIG, upgradeCost, upgradeMaterialCost } from "../../game/content/config";
 import { canCraftActiveTask, getActiveTask, getTaskGuidance } from "../../game/simulation/systems/progression";
-import type { CraftRecipe, GameState, RunResult, TaskGuidanceState, UpgradeId, UpgradeState } from "../../game/simulation/types";
+import type { CraftRecipe, GameState, InventoryCost, RunResult, TaskGuidanceState, UnlockId, UpgradeId, UpgradeState, WeaponId } from "../../game/simulation/types";
 
 interface HudHandlers {
   sameSeed: () => void;
   newRun: () => void;
   buyUpgrade: (id: UpgradeId) => UpgradeState;
+  buyUnlock: (id: UnlockId) => UpgradeState;
+  equipWeapon: (id: WeaponId) => UpgradeState;
   craftObjective: () => UpgradeState;
   resume: () => void;
+  closeSummary: (result: RunResult | null) => void;
 }
 
 let controller: HudController | null = null;
@@ -28,6 +31,9 @@ export class HudController {
   private readonly root: HTMLDivElement;
   private handlers: HudHandlers | null = null;
   private runSummaryVisible = false;
+  private lastTaskSignature = "";
+  private activeServiceTab: "upgrades" | "unlocks" | "contract" = "upgrades";
+  private lastSummaryProgress: UpgradeState | null = null;
 
   constructor(root: HTMLDivElement) {
     this.root = root;
@@ -56,14 +62,15 @@ export class HudController {
               <span class="charge-pips" data-value="blast-pips"></span>
               <span class="charge-timer" data-value="blast-timer"></span>
             </div>
-            <div class="slot"><span class="slot-key">SHIFT</span><span class="slot-name">DASH</span></div>
-            <div class="slot"><span class="slot-key">E</span><span class="slot-name">BANK</span></div>
+            <div class="slot shield" data-slot="shield"><span class="slot-key">SPACE</span><span class="slot-name">SHIELD</span><span class="charge-timer" data-value="shield-state"></span></div>
+            <div class="slot" data-slot="dash"><span class="slot-key">SHIFT</span><span class="slot-name">DASH</span></div>
+            <div class="slot"><span class="slot-key">E</span><span class="slot-name">STORE</span></div>
           </div>
         </div>
 
-        <div class="mission-intro" data-panel="mission-intro">
-          <div class="mission-kicker" data-value="mission-territory">FIELD MISSION</div>
-          <div class="mission-title" data-value="mission-title">Org Order</div>
+        <div class="mission-intro is-hidden" data-panel="mission-intro">
+          <div class="mission-kicker" data-value="mission-territory"></div>
+          <div class="mission-title" data-value="mission-title"></div>
           <div class="mission-loadout" data-value="mission-loadout"></div>
           <div class="mission-first" data-value="mission-first"></div>
         </div>
@@ -74,6 +81,7 @@ export class HudController {
             <b data-value="task-meta"></b>
           </div>
           <div class="task-next" data-value="task-next">Find ore</div>
+          <div class="task-progress-live" data-value="task-progress"></div>
           <div class="task-steps" data-value="task-steps"></div>
         </div>
         
@@ -90,7 +98,12 @@ export class HudController {
         <div class="hud-boss" data-panel="boss">
           <div class="meter boss"><i data-meter="boss"></i></div><b data-value="boss">0</b>
         </div>
-        <div class="dock-chip" data-panel="dock">E</div>
+        <div class="dock-chip" data-panel="dock">E STORE</div>
+        <div class="purchase-hint is-hidden" data-panel="purchase-hint">
+          <span data-value="purchase-kicker">SERVICE BAY READY</span>
+          <b data-value="purchase-title"></b>
+          <em data-value="purchase-action"></em>
+        </div>
         
         <div class="hud-radar-wrapper">
           <div class="hud-radar-frame">
@@ -122,8 +135,11 @@ export class HudController {
     setText(this.root, "hull", `${Math.ceil(state.player.hull)}`);
     setText(this.root, "heat", state.player.overheatedTimer > 0 ? "LOCK" : `${Math.round(state.player.heat)}`);
 
+    this.renderAbilitySlots(state);
     this.renderBlastCharges(state);
+    this.renderShieldState(state);
     this.renderMissionIntro(state);
+    this.renderPurchaseHint(progress, this.runSummaryVisible);
 
     // Calculate current cargo value/score
     const cargoValue = 
@@ -158,21 +174,18 @@ export class HudController {
 
     const bossPanel = this.root.querySelector<HTMLElement>('[data-panel="boss"]');
     if (bossPanel) {
-      bossPanel.classList.toggle("is-hidden", !state.boss.active && !state.boss.defeated);
+      bossPanel.classList.toggle("is-hidden", !state.boss.active || state.boss.defeated);
     }
     setWidth(this.root, "boss", state.boss.maxHealth > 0 ? state.boss.health / state.boss.maxHealth : 0);
     setText(this.root, "boss", `${Math.ceil(state.boss.health)}`);
 
     const dock = this.root.querySelector<HTMLElement>('[data-panel="dock"]');
-    let distToExtraction = Number.POSITIVE_INFINITY;
     if (dock) {
-      distToExtraction = Math.hypot(state.player.x - state.world.extraction.x, state.player.y - state.world.extraction.y);
-      dock.classList.toggle("is-hidden", distToExtraction > 72 || state.status !== "playing");
+      dock.classList.toggle("is-hidden", state.status !== "playing");
     }
 
     this.renderTaskHud(progress, {
       cargoValue,
-      distanceToExtraction: distToExtraction,
       threatMood: state.threat.mood,
       bossActive: state.boss.active,
       bossDefeated: state.boss.defeated
@@ -211,13 +224,50 @@ export class HudController {
     if (action === "new-run") {
       this.handlers.newRun();
     }
+    if (action === "close-summary") {
+      const activeResult = this.root.querySelector<HTMLElement>('[data-panel="summary"]')?.dataset.result;
+      this.handlers.closeSummary(activeResult ? JSON.parse(activeResult) as RunResult : null);
+    }
     if (action === "resume") {
       this.handlers.resume();
+    }
+    if (action === "service-tab") {
+      const tab = button.dataset.tab as HudController["activeServiceTab"] | undefined;
+      if (tab) {
+        this.activeServiceTab = tab;
+        const activeResult = this.root.querySelector<HTMLElement>('[data-panel="summary"]')?.dataset.result;
+        if (activeResult && this.lastSummaryProgress) {
+          const result = JSON.parse(activeResult) as RunResult;
+          this.renderSummary(result, this.lastSummaryProgress);
+        }
+      }
     }
     if (action === "upgrade") {
       const id = button.dataset.upgrade as UpgradeId | undefined;
       if (id) {
         const progress = this.handlers.buyUpgrade(id);
+        const activeResult = this.root.querySelector<HTMLElement>('[data-panel="summary"]')?.dataset.result;
+        if (activeResult) {
+          const result = JSON.parse(activeResult) as RunResult;
+          this.renderSummary(result, progress);
+        }
+      }
+    }
+    if (action === "unlock") {
+      const id = button.dataset.unlock as UnlockId | undefined;
+      if (id) {
+        const progress = this.handlers.buyUnlock(id);
+        const activeResult = this.root.querySelector<HTMLElement>('[data-panel="summary"]')?.dataset.result;
+        if (activeResult) {
+          const result = JSON.parse(activeResult) as RunResult;
+          this.renderSummary(result, progress);
+        }
+      }
+    }
+    if (action === "equip-weapon") {
+      const id = button.dataset.weapon as WeaponId | undefined;
+      if (id) {
+        const progress = this.handlers.equipWeapon(id);
         const activeResult = this.root.querySelector<HTMLElement>('[data-panel="summary"]')?.dataset.result;
         if (activeResult) {
           const result = JSON.parse(activeResult) as RunResult;
@@ -253,13 +303,42 @@ export class HudController {
       return;
     }
 
-    slot.classList.toggle("is-locked", state.player.blastCharges === 0);
+    const unlocked = state.upgrades.purchasedUnlocks.includes("swarmBlast");
+    slot.classList.toggle("is-hidden", !unlocked);
+    slot.classList.toggle("is-locked", unlocked && state.player.blastCharges === 0);
     slot.classList.toggle("is-cooling", state.player.blastRepeatCooldown > 0);
     pips.innerHTML = Array.from({ length: 3 }, (_, index) => {
       const active = index < state.player.blastCharges ? "is-active" : "";
       return `<i class="${active}"></i>`;
     }).join("");
     timer.textContent = state.player.blastCharges === 0 ? `${Math.ceil(state.player.blastRechargeTimer)}s` : "";
+  }
+
+  private renderShieldState(state: GameState): void {
+    const slot = this.root.querySelector<HTMLElement>('[data-slot="shield"]');
+    const stateNode = this.root.querySelector<HTMLElement>('[data-value="shield-state"]');
+    if (!slot || !stateNode) {
+      return;
+    }
+
+    const unlocked = state.upgrades.purchasedUnlocks.includes("shieldEmitter");
+    slot.classList.toggle("is-hidden", !unlocked);
+    slot.classList.toggle("is-locked", !unlocked);
+    slot.classList.toggle("is-cooling", unlocked && state.player.shieldCooldown > 0);
+    if (!unlocked) {
+      stateNode.textContent = "LOCK";
+    } else if (state.player.shieldActiveTimer > 0) {
+      stateNode.textContent = "ON";
+    } else if (state.player.shieldCooldown > 0) {
+      stateNode.textContent = `${Math.ceil(state.player.shieldCooldown)}s`;
+    } else {
+      stateNode.textContent = `${Math.ceil(state.player.shield)}`;
+    }
+  }
+
+  private renderAbilitySlots(state: GameState): void {
+    const dash = this.root.querySelector<HTMLElement>('[data-slot="dash"]');
+    dash?.classList.toggle("is-hidden", !state.upgrades.purchasedUnlocks.includes("dashModule"));
   }
 
   private renderMissionIntro(state: GameState): void {
@@ -274,7 +353,6 @@ export class HudController {
       return;
     }
 
-    panel.classList.toggle("is-hidden", state.mission.introTimer <= 0 || state.status !== "playing");
     territory.textContent = TERRITORY_CONFIG[task.territory].label.toUpperCase();
     title.textContent = task.label.replace("Org Order: ", "");
     loadout.innerHTML = task.requirements
@@ -283,12 +361,33 @@ export class HudController {
       .join("");
     const guidance = getTaskGuidance(state.upgrades, task, {
       cargoValue: 0,
-      distanceToExtraction: Number.POSITIVE_INFINITY,
       threatMood: state.threat.mood,
       bossActive: state.boss.active,
       bossDefeated: state.boss.defeated
     });
     first.textContent = guidance.nextAction;
+    panel.classList.toggle("is-hidden", state.mission.introTimer <= 0 || state.status !== "playing" || title.textContent.trim().length === 0);
+  }
+
+  private renderPurchaseHint(progress: UpgradeState, serviceBayOpen: boolean): void {
+    const panel = this.root.querySelector<HTMLElement>('[data-panel="purchase-hint"]');
+    const title = this.root.querySelector<HTMLElement>('[data-value="purchase-title"]');
+    const action = this.root.querySelector<HTMLElement>('[data-value="purchase-action"]');
+    if (!panel || !title || !action) {
+      return;
+    }
+
+    const suggestion = findPurchaseSuggestion(progress);
+    if (!suggestion) {
+      panel.classList.add("is-hidden");
+      return;
+    }
+
+    panel.classList.remove("is-hidden");
+    panel.classList.toggle("is-service-open", serviceBayOpen);
+    panel.classList.toggle("is-unlock", suggestion.kind === "unlock");
+    title.textContent = suggestion.title;
+    action.textContent = serviceBayOpen ? suggestion.serviceAction : suggestion.fieldAction;
   }
 
   private renderSummary(result: RunResult, progress: UpgradeState): void {
@@ -298,7 +397,10 @@ export class HudController {
     }
 
     panel.dataset.result = JSON.stringify(result);
-    const outcome = result.outcome === "destroyed" ? "SHIP LOST" : "CARGO BANKED";
+    this.lastSummaryProgress = progress;
+    this.renderPurchaseHint(progress, true);
+    const outcome = result.outcome === "destroyed" ? "SHIP LOST" : result.mode === "store" ? "STORE DOCKED" : "CARGO BANKED";
+    const creditedValue = result.outcome === "destroyed" ? 0 : result.creditsEarned;
     const task = result.activeTaskId ? ORG_TASKS.find((candidate) => candidate.id === result.activeTaskId) : getActiveTask(progress);
     const guidance = getTaskGuidance(progress, task ?? null, { cargoValue: result.creditsEarned, bossDefeated: result.voltrixCore });
     const recipe = task?.recipe ? CRAFT_RECIPES[task.recipe] : null;
@@ -321,16 +423,18 @@ export class HudController {
         const config = UPGRADE_CONFIG[id];
         const level = progress[id];
         const cost = upgradeCost(id, level);
+        const materials = upgradeMaterialCost(id, level);
         const maxed = level >= config.maxLevel;
-        const disabled = maxed || progress.credits < cost ? "disabled" : "";
+        const disabled = maxed || progress.credits < cost || !canPayMaterials(progress.stockpile, materials) ? "disabled" : "";
         const price = maxed ? "MAX" : `${cost}c`;
         const label = upgradeDisplayLabel(id, config.label);
         const before = Math.round((level / config.maxLevel) * 100);
         const after = Math.round((Math.min(config.maxLevel, level + 1) / config.maxLevel) * 100);
         return `
           <button class="upgrade-node ${id}" type="button" data-action="upgrade" data-upgrade="${id}" ${disabled}>
-            <span class="node-dot"></span>
+            ${moduleIcon(id)}
             <span class="node-copy"><b>${label}</b><em>L${level} / ${config.maxLevel}</em></span>
+            <span class="upgrade-materials">${renderMaterialCost(materials, progress.stockpile)}</span>
             <span class="node-bars">
               <i style="--value:${before}%"></i>
               <i class="after" style="--value:${after}%"></i>
@@ -340,53 +444,34 @@ export class HudController {
         `;
       })
       .join("");
-
-    panel.innerHTML = `
-      <div class="service-console">
-        <aside class="service-bank">
-          <div class="bank-title">${outcome}</div>
-          <div class="bank-readout">
-            <span>Run credit</span>
-            <b>+${result.creditsEarned}</b>
+    const unlocks = renderUnlockShop(progress);
+    const weapons = renderWeaponBay(progress);
+    const tab = this.activeServiceTab;
+    const tabContent = tab === "upgrades"
+      ? `
+        <div class="run-grid compact">
+          ${rows.map(([label, value]) => `<div><span>${label}</span><b>${value}</b></div>`).join("")}
+        </div>
+        <div class="upgrade-grid compact">${upgrades}</div>
+      `
+      : tab === "unlocks"
+        ? `
+          <div class="unlock-bay compact">
+            <div class="bay-label">Unlocks</div>
+            <div class="unlock-grid">${unlocks}</div>
           </div>
-          <div class="bank-readout">
-            <span>Account</span>
-            <b>${progress.credits}</b>
+          <div class="weapon-bay compact">
+            <div class="bay-label">Weapons</div>
+            <div class="weapon-grid">${weapons}</div>
           </div>
-          <div class="bank-cargo">
-            ${renderCargoRows(result)}
-          </div>
-          <div class="bank-stamp">${result.outcome === "destroyed" ? "Cargo lost" : "Cargo credited"}</div>
-        </aside>
-
-        <section class="service-main">
-          <div class="service-tabs">
-            <span class="is-active">Upgrades & Repairs</span>
-            <span>Workshop</span>
-            <span>Cargo Exchange</span>
-          </div>
-
+        `
+        : `
           <div class="summary-task">
             <b>${task?.label ?? "No active org order"}</b>
             <span>${escapeHtml(guidance.nextAction)}</span>
             ${renderStepList(guidance, "summary-step-list")}
           </div>
-
-          <div class="run-grid">
-            ${rows.map(([label, value]) => `<div><span>${label}</span><b>${value}</b></div>`).join("")}
-          </div>
-
-          <div class="ship-bay">
-            <div class="ship-silhouette">
-              <span class="ship-nose"></span>
-              <span class="ship-core"></span>
-              <span class="ship-wing left"></span>
-              <span class="ship-wing right"></span>
-            </div>
-            <div class="upgrade-grid">${upgrades}</div>
-          </div>
-
-          <div class="service-lower">
+          <div class="service-lower compact">
             <div class="workshop-bay">
               <div class="bay-label">Workshop</div>
               <b>${recipe?.label ?? "No recipe queued"}</b>
@@ -395,15 +480,46 @@ export class HudController {
             </div>
             <div class="exchange-bay">
               <div class="bay-label">Cargo Exchange</div>
-              <b>${result.outcome === "destroyed" ? "No transfer" : "Transfer complete"}</b>
-              <div class="exchange-total"><span>Run cargo</span><strong>${result.creditsEarned}c</strong></div>
+              <b>${result.outcome === "destroyed" ? "No transfer" : "Store transfer complete"}</b>
+              <div class="exchange-total"><span>Run cargo</span><strong>${creditedValue}c</strong></div>
               <div class="exchange-total"><span>Voltrix core</span><strong>${result.voltrixCore ? "+220c" : "none"}</strong></div>
             </div>
           </div>
+        `;
+
+    panel.innerHTML = `
+      <button class="summary-close" type="button" data-action="close-summary" aria-label="Close summary">X</button>
+      <div class="service-console">
+        <aside class="service-bank">
+          <div class="bank-title">${outcome}</div>
+          <div class="bank-readout">
+            <span>Run credit</span>
+            <b>+${creditedValue}</b>
+          </div>
+          <div class="bank-readout">
+            <span>Account</span>
+            <b>${progress.credits}</b>
+          </div>
+          <div class="bank-stockpile">
+            ${renderStockpileRows(progress)}
+          </div>
+          <div class="bank-cargo">
+            ${renderCargoRows(result)}
+          </div>
+          <div class="bank-stamp">${result.outcome === "destroyed" ? "Cargo lost" : result.mode === "store" ? "Cargo sold" : "Cargo credited"}</div>
+        </aside>
+
+        <section class="service-main">
+          <div class="service-tabs">
+            <button type="button" data-action="service-tab" data-tab="upgrades" class="${tab === "upgrades" ? "is-active" : ""}">Upgrades</button>
+            <button type="button" data-action="service-tab" data-tab="unlocks" class="${tab === "unlocks" ? "is-active" : ""}">Unlocks</button>
+            <button type="button" data-action="service-tab" data-tab="contract" class="${tab === "contract" ? "is-active" : ""}">Contract</button>
+          </div>
+          ${tabContent}
         </section>
       </div>
       <div class="run-actions">
-        <button type="button" data-action="same-seed">Same Seed</button>
+        ${result.mode === "store" ? `<button type="button" data-action="close-summary">Resume Run</button>` : `<button type="button" data-action="same-seed">Same Seed</button>`}
         <button type="button" data-action="new-run">New Run</button>
       </div>
     `;
@@ -414,10 +530,11 @@ export class HudController {
     const name = this.root.querySelector<HTMLElement>('[data-value="task-name"]');
     const next = this.root.querySelector<HTMLElement>('[data-value="task-next"]');
     const meta = this.root.querySelector<HTMLElement>('[data-value="task-meta"]');
+    const progressLine = this.root.querySelector<HTMLElement>('[data-value="task-progress"]');
     const steps = this.root.querySelector<HTMLElement>('[data-value="task-steps"]');
     const task = getActiveTask(progress);
 
-    if (!panel || !name || !next || !meta || !steps || !task || !progress.activeTask) {
+    if (!panel || !name || !next || !meta || !progressLine || !steps || !task || !progress.activeTask) {
       panel?.classList.add("is-hidden");
       return;
     }
@@ -428,8 +545,16 @@ export class HudController {
     panel.classList.toggle("is-danger", Boolean(guidance.bossCue && options?.threatMood !== "quiet"));
     name.textContent = guidance.label;
     next.textContent = guidance.nextAction;
+    progressLine.textContent = currentProgressLine(guidance);
     meta.textContent = `${TERRITORY_CONFIG[task.territory].label} / ${task.mapVariant}`;
     steps.innerHTML = renderObjectiveChips(guidance);
+    const signature = guidance.stepStates.map((step) => `${step.label}:${step.current}/${step.target}:${step.complete}`).join("|");
+    if (this.lastTaskSignature && signature !== this.lastTaskSignature) {
+      panel.classList.remove("is-progress-pulse");
+      void panel.offsetWidth;
+      panel.classList.add("is-progress-pulse");
+    }
+    this.lastTaskSignature = signature;
   }
 }
 
@@ -483,6 +608,14 @@ function renderObjectiveChips(guidance: TaskGuidanceState): string {
   `;
 }
 
+function currentProgressLine(guidance: TaskGuidanceState): string {
+  const active = guidance.stepStates.find((step) => !step.complete);
+  if (!active) {
+    return "Contract ready to complete";
+  }
+  return `${active.label} ${active.current}/${active.target}`;
+}
+
 function renderCargoRows(result: RunResult): string {
   return (Object.keys(ORE_CONFIG) as Array<keyof typeof ORE_CONFIG>)
     .map((ore) => {
@@ -490,6 +623,27 @@ function renderCargoRows(result: RunResult): string {
       return `<div>${oreIcon(ore)}<b>${count}</b><i>${count * ORE_CONFIG[ore].value}c</i></div>`;
     })
     .join("");
+}
+
+function renderStockpileRows(progress: UpgradeState): string {
+  return (Object.keys(ORE_CONFIG) as Array<keyof typeof ORE_CONFIG>)
+    .map((ore) => `<div>${oreIcon(ore)}<b>${progress.stockpile[ore]}</b></div>`)
+    .join("");
+}
+
+function renderMaterialCost(costs: InventoryCost, stockpile: UpgradeState["stockpile"]): string {
+  return (Object.entries(costs) as Array<[keyof typeof ORE_CONFIG, number]>)
+    .filter(([, amount]) => amount > 0)
+    .map(([ore, amount]) => {
+      const ready = stockpile[ore] >= amount ? "ready" : "missing";
+      return `<i class="${ready}">${oreIcon(ore)}${stockpile[ore]}/${amount}</i>`;
+    })
+    .join("");
+}
+
+function canPayMaterials(stockpile: UpgradeState["stockpile"], costs: InventoryCost): boolean {
+  return (Object.entries(costs) as Array<[keyof typeof ORE_CONFIG, number]>)
+    .every(([ore, amount]) => stockpile[ore] >= amount);
 }
 
 function renderMaterialSockets(recipe: CraftRecipe, progress: UpgradeState): string {
@@ -501,6 +655,114 @@ function renderMaterialSockets(recipe: CraftRecipe, progress: UpgradeState): str
       return `<span class="${ready}">${oreIcon(ore)}<i>${Math.min(current, amount)}/${amount}</i></span>`;
     })
     .join("");
+}
+
+function renderUnlockShop(progress: UpgradeState): string {
+  return (Object.keys(UNLOCK_CONFIG) as UnlockId[])
+    .map((id) => {
+      const config = UNLOCK_CONFIG[id];
+      const purchased = progress.purchasedUnlocks.includes(id);
+      const shopUnlocked = progress.unlockedShopItems.includes(id);
+      const taskReady = !config.requiresTask || progress.completedTasks.includes(config.requiresTask);
+      const canBuy = shopUnlocked && taskReady && !purchased && progress.credits >= config.cost;
+      const disabled = purchased || !canBuy ? "disabled" : "";
+      const state = purchased ? "OWNED" : !shopUnlocked || !taskReady ? "GATED" : `${config.cost}c`;
+      return `
+        <button class="unlock-node ${purchased ? "is-owned" : ""}" type="button" data-action="unlock" data-unlock="${id}" ${disabled}>
+          ${moduleIcon(id)}
+          <b>${escapeHtml(config.label)}</b>
+          <strong>${state}</strong>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function renderWeaponBay(progress: UpgradeState): string {
+  return (Object.keys(WEAPON_CONFIG) as WeaponId[])
+    .map((id) => {
+      const config = WEAPON_CONFIG[id];
+      const owned = !config.unlock || progress.purchasedUnlocks.includes(config.unlock);
+      const active = progress.equippedWeapon === id;
+      const disabled = !owned || active ? "disabled" : "";
+      return `
+        <button class="weapon-node ${active ? "is-active" : ""}" type="button" data-action="equip-weapon" data-weapon="${id}" ${disabled}>
+          ${moduleIcon(id)}
+          <b>${escapeHtml(config.label)}</b>
+          <strong>${active ? "EQUIPPED" : owned ? "EQUIP" : "LOCKED"}</strong>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+interface PurchaseSuggestion {
+  kind: "unlock" | "upgrade";
+  title: string;
+  fieldAction: string;
+  serviceAction: string;
+}
+
+function findPurchaseSuggestion(progress: UpgradeState): PurchaseSuggestion | null {
+  const unlockPriority: UnlockId[] = ["dashModule", "shieldEmitter", "swarmBlast", "piercerWeapon", "scatterWeapon"];
+  for (const id of unlockPriority) {
+    const config = UNLOCK_CONFIG[id];
+    const taskReady = !config.requiresTask || progress.completedTasks.includes(config.requiresTask);
+    if (
+      progress.unlockedShopItems.includes(id) &&
+      taskReady &&
+      !progress.purchasedUnlocks.includes(id) &&
+      progress.credits >= config.cost
+    ) {
+      return {
+        kind: "unlock",
+        title: `${config.label} available to unlock`,
+        fieldAction: "Store to install",
+        serviceAction: "Buy in Unlocks"
+      };
+    }
+  }
+
+  const upgradePriority: UpgradeId[] = ["laserPower", "heatSink", "engine", "magnetRadius", "hull"];
+  for (const id of upgradePriority) {
+    const config = UPGRADE_CONFIG[id];
+    const level = progress[id];
+    if (level >= config.maxLevel) {
+      continue;
+    }
+
+    const cost = upgradeCost(id, level);
+    const materials = upgradeMaterialCost(id, level);
+    if (progress.credits >= cost && canPayMaterials(progress.stockpile, materials)) {
+      return {
+        kind: "upgrade",
+        title: `${upgradeDisplayLabel(id, config.label)} upgrade available`,
+        fieldAction: "Store to fit",
+        serviceAction: "Buy in Upgrades"
+      };
+    }
+  }
+
+  return null;
+}
+
+function moduleIcon(id: UpgradeId | UnlockId | WeaponId): string {
+  const paths: Record<string, string> = {
+    laserPower: `<path d="M4 12h10"/><path d="m14 6 6 6-6 6"/><path d="M5 5 3 7"/><path d="M5 19 3 17"/>`,
+    heatSink: `<path d="M8 3v10a4 4 0 1 0 8 0V3"/><path d="M8 7h8"/><path d="M8 11h8"/>`,
+    magnetRadius: `<path d="M6 4v7a6 6 0 0 0 12 0V4"/><path d="M6 4h4"/><path d="M14 4h4"/><path d="M6 12H3"/><path d="M21 12h-3"/>`,
+    hull: `<path d="M12 3 20 7v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7l8-4Z"/><path d="M12 7v10"/>`,
+    engine: `<path d="M12 2c3 3 5 6 5 10a5 5 0 0 1-10 0c0-4 2-7 5-10Z"/><path d="M9 17c-1 1.3-1.5 2.6-1.5 4"/><path d="M15 17c1 1.3 1.5 2.6 1.5 4"/>`,
+    dashModule: `<path d="M4 12h10"/><path d="m13 5 7 7-7 7"/><path d="M4 6h4"/><path d="M4 18h4"/>`,
+    shieldEmitter: `<path d="M12 3 20 7v5c0 5-3.4 8-8 9-4.6-1-8-4-8-9V7l8-4Z"/><path d="M9 12h6"/>`,
+    swarmBlast: `<circle cx="7" cy="8" r="2"/><circle cx="16" cy="7" r="2"/><circle cx="12" cy="16" r="2"/><path d="M9 9.5 11 14"/><path d="m14.5 8.5-2 5.5"/>`,
+    piercerWeapon: `<path d="M3 12h12"/><path d="m14 5 7 7-7 7"/><path d="M6 7h4"/><path d="M6 17h4"/>`,
+    scatterWeapon: `<path d="M4 12h6"/><path d="m10 12 8-6"/><path d="m10 12 8 6"/><path d="m10 12h10"/>`,
+    drillShot: `<path d="m14 4 6 6-8 8-6-6 8-8Z"/><path d="m4 20 4-4"/><path d="m12 6 6 6"/>`,
+    piercer: `<path d="M3 12h12"/><path d="m14 5 7 7-7 7"/><path d="M7 9h4"/><path d="M7 15h4"/>`,
+    scatter: `<path d="M4 12h6"/><path d="m10 12 8-6"/><path d="m10 12 8 6"/><path d="m10 12h10"/>`
+  };
+  return `<span class="module-icon" aria-hidden="true"><svg viewBox="0 0 24 24">${paths[id] ?? paths.laserPower}</svg></span>`;
 }
 
 function renderOreCount(ore: keyof typeof ORE_CONFIG, count: number): string {

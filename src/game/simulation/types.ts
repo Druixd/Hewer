@@ -2,12 +2,15 @@ export const TILE_SIZE = 24;
 
 export type OreId = "ferrite" | "shimmer" | "voltaic" | "aetherium";
 export type BlockId = "empty" | "basalt" | "ferrite" | "shimmer" | "voltaic" | "aetherium" | "ancient";
-export type EnemyId = "arcWarden" | "prismStalker" | "sparkSac";
+export type EnemyId = "arcWarden" | "prismStalker" | "sparkSac" | "phaseMite";
 export type UpgradeId = "laserPower" | "heatSink" | "magnetRadius" | "hull" | "engine";
+export type UnlockId = "dashModule" | "shieldEmitter" | "swarmBlast" | "piercerWeapon" | "scatterWeapon";
+export type WeaponId = "drillShot" | "piercer" | "scatter";
+export type AbilityId = "dash" | "shield" | "swarm";
 export type TerritoryId = "shimmerVeins" | "cinderHollows";
 export type MapVariantId = "ribbon" | "fracture" | "sink";
 export type ObjectiveItemId = "relayFrame" | "voltaicKeystone" | "cinderBrace";
-export type BossAchievementId = "voltrixCore" | "pyroclastMark";
+export type BossAchievementId = "voltrixCore" | "sentinelEye" | "pyroclastMark";
 export type RunStatus = "playing" | "extracted" | "destroyed" | "victory";
 export type RunOutcome = Exclude<RunStatus, "playing">;
 
@@ -56,6 +59,10 @@ export interface PlayerState {
   blastCharges: number;
   blastRepeatCooldown: number;
   blastRechargeTimer: number;
+  shield: number;
+  shieldMax: number;
+  shieldActiveTimer: number;
+  shieldCooldown: number;
   objectiveWaveCooldown: number;
   invulnerableTimer: number;
   collectionPulse: number;
@@ -81,6 +88,8 @@ export type TaskRequirement =
       item: ObjectiveItemId;
       amount: number;
     };
+
+export type ContractStepKind = "gather" | "bank" | "craft" | "boss" | "extract";
 
 export interface TaskStepState {
   label: string;
@@ -112,6 +121,8 @@ export interface OrgTask {
   mapVariant: MapVariantId;
   requirements: TaskRequirement[];
   recipe?: ObjectiveItemId;
+  bossAchievement?: BossAchievementId;
+  unlocks?: UnlockId[];
   unlocksTerritory?: TerritoryId;
 }
 
@@ -120,6 +131,9 @@ export interface ActiveTaskState {
   collected: InventoryState;
   materials: InventoryState;
   crafted: Partial<Record<ObjectiveItemId, number>>;
+  banked: boolean;
+  bossDefeated: boolean;
+  extracted: boolean;
   completed: boolean;
 }
 
@@ -131,6 +145,7 @@ export interface BossAchievement {
 
 export interface UpgradeState {
   credits: number;
+  stockpile: InventoryState;
   laserPower: number;
   heatSink: number;
   magnetRadius: number;
@@ -146,6 +161,9 @@ export interface UpgradeState {
   completedTasks: string[];
   craftedItems: Partial<Record<ObjectiveItemId, number>>;
   bossAchievements: BossAchievementId[];
+  unlockedShopItems: UnlockId[];
+  purchasedUnlocks: UnlockId[];
+  equippedWeapon: WeaponId;
 }
 
 export interface EffectiveStats {
@@ -215,6 +233,7 @@ export interface HazardState {
 
 export interface ProjectileState {
   id: string;
+  owner: "player" | "enemy";
   x: number;
   y: number;
   vx: number;
@@ -224,6 +243,7 @@ export interface ProjectileState {
   lifetime: number;
   damage: number;
   color: number;
+  pierces: number;
 }
 
 export interface BombState {
@@ -261,6 +281,7 @@ export interface BossSegmentState {
 }
 
 export interface BossState {
+  kind: BossAchievementId;
   active: boolean;
   defeated: boolean;
   health: number;
@@ -303,11 +324,16 @@ export interface GameEvent {
     | "projectile-hit"
     | "blast-charge-spent"
     | "blast-recharged"
+    | "ability-locked"
+    | "shield-activated"
+    | "shield-broken"
+    | "weapon-switched"
     | "mission-started"
     | "objective-focused"
     | "objective-complete"
     | "craft-ready"
     | "extract-ready"
+    | "store-called"
     | "enemy-wave-started";
   x: number;
   y: number;
@@ -316,6 +342,7 @@ export interface GameEvent {
 }
 
 export interface RunResult {
+  mode: "store" | "run-end";
   outcome: RunOutcome;
   inventory: InventoryState;
   minedBlocks: number;
@@ -359,6 +386,7 @@ export interface InputActions {
   secondaryAbility: boolean;
   secondaryPressed: boolean;
   dashPressed: boolean;
+  shieldPressed: boolean;
   toggleIntensityPressed: boolean;
   pausePressed: boolean;
   extractPressed: boolean;
