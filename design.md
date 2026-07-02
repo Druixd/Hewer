@@ -217,7 +217,9 @@ The first polish pass after unlocks should remove beam-like enemy/boss attacks. 
 
 The screen-space darkness must cover the full viewport without visible texture cut lines. Use an oversized diagonal-fit vignette so corners darken consistently on wide screens and no left/right strip appears outside the overlay.
 
-Enemies should obey cave collision and movement physics. Patrol, chase, dash, and boss movement must resolve against solid tiles instead of passing through terrain; wall hits should stop, bounce, or redirect the enemy depending on behavior. Enemy projectiles may collide with terrain, but enemy bodies should remain in navigable cave space.
+Enemies should obey cave collision and movement physics. Patrol, chase, dash, and boss movement must resolve against solid tiles instead of passing through terrain; wall hits should stop, bounce, or redirect the enemy depending on behavior. Enemies actively chasing the player should use tile-aware pathfinding when the direct route is blocked, steering through navigable cave openings instead of pushing into terrain. Enemy projectiles may collide with terrain, but enemy bodies should remain in navigable cave space.
+
+Initial run generation should guarantee a small nearby starter enemy pocket after validating open, collision-clear cave space. The larger procedural enemy distribution can still place deeper pockets, but the player should not need to cross a large dark map before seeing any hostile life.
 
 The service bay must have a visible close control and every purchasable module should have a compact visual icon. Use local icon shapes or existing generated art first; online image assets are not required for the current HUD scale.
 

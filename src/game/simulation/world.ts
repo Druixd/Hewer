@@ -178,6 +178,7 @@ export function createInitialEnemies(world: WorldState): EnemyState[] {
     id += 1;
   }
 
+  id = ensureStarterEnemyPocket(world, enemies, id);
   return enemies;
 }
 
@@ -226,6 +227,90 @@ function isEnemySpawnClear(world: WorldState, x: number, y: number, radius: numb
     }
   }
   return openNeighbors >= 2;
+}
+
+function ensureStarterEnemyPocket(world: WorldState, enemies: EnemyState[], nextId: number): number {
+  const nearbyEnemies = enemies.filter((enemy) => distanceWorld(enemy.x, enemy.y, world.spawn.x, world.spawn.y) < 980).length;
+  if (nearbyEnemies >= 3) {
+    return nextId;
+  }
+
+  const spawnTileX = Math.floor(world.spawn.x / TILE_SIZE);
+  const spawnTileY = Math.floor(world.spawn.y / TILE_SIZE);
+  const starterKinds: EnemyState["kind"][] = ["sparkSac", "prismStalker", "phaseMite"];
+  let id = nextId;
+
+  for (let index = 0; index < starterKinds.length; index += 1) {
+    const kind = starterKinds[index];
+    const config = ENEMY_CONFIG[kind];
+    const position = findStarterEnemyPosition(world, spawnTileX, spawnTileY, index, config.radius, enemies);
+    if (!position) {
+      continue;
+    }
+
+    const timerRoll = coordNoise(world.seed, position.tileX, position.tileY, 308);
+    const directionRoll = coordNoise(world.seed, position.tileY, position.tileX, 309);
+    enemies.push({
+      id: `starter-enemy-${id}`,
+      kind,
+      x: position.x,
+      y: position.y,
+      vx: 0,
+      vy: 0,
+      anchorX: position.x,
+      anchorY: position.y,
+      health: config.health,
+      maxHealth: config.health,
+      radius: config.radius,
+      state: kind === "sparkSac" || kind === "phaseMite" ? "chase" : "patrol",
+      cooldown: 0.8 + timerRoll * 1.8,
+      timer: timerRoll * 3,
+      direction: directionRoll > 0.5 ? 1 : -1,
+      targetX: world.spawn.x,
+      targetY: world.spawn.y
+    });
+    id += 1;
+  }
+
+  return id;
+}
+
+function findStarterEnemyPosition(
+  world: WorldState,
+  spawnTileX: number,
+  spawnTileY: number,
+  index: number,
+  radius: number,
+  existingEnemies: EnemyState[]
+): { x: number; y: number; tileX: number; tileY: number } | null {
+  for (let ring = 15; ring <= 34; ring += 2) {
+    for (let step = 0; step < 28; step += 1) {
+      const angle = (step / 28) * Math.PI * 2 + coordNoise(world.seed, index, ring, 310) * 0.36;
+      const tileX = spawnTileX + Math.round(Math.cos(angle) * ring);
+      const tileY = spawnTileY + Math.round(Math.sin(angle) * ring * 0.68);
+      const x = tileX * TILE_SIZE + TILE_SIZE / 2;
+      const y = tileY * TILE_SIZE + TILE_SIZE / 2;
+      const spawnDistance = distanceWorld(x, y, world.spawn.x, world.spawn.y);
+
+      if (spawnDistance < 360 || spawnDistance > 880) {
+        continue;
+      }
+      if (!isEnemySpawnClear(world, x, y, radius)) {
+        continue;
+      }
+      if (existingEnemies.some((enemy) => distanceWorld(enemy.x, enemy.y, x, y) < 180)) {
+        continue;
+      }
+
+      return { x, y, tileX, tileY };
+    }
+  }
+
+  return null;
+}
+
+function distanceWorld(ax: number, ay: number, bx: number, by: number): number {
+  return Math.hypot(ax - bx, ay - by);
 }
 
 function createWorldShapeProfile(seed: string): WorldShapeProfile {

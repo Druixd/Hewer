@@ -37,3 +37,5 @@ Author: Nitish
 - [x] Add a compact HUD purchase suggestion when a shop unlock or ship upgrade becomes affordable.
 - [x] Replace fixed extraction with an anywhere Store shuttle that sells current cargo, opens the service bay, and resumes the same run on close.
 - [x] Replace broken CSS upgrade/unlock icon drawings with compact Lucide-style inline SVG icons.
+- [x] Add tile-aware A* chase pathfinding for Spark Sac, Phase Mite, and boss movement so blocked enemies route through open cave space instead of pressing into walls.
+- [x] Guarantee a nearby collision-clear starter enemy pocket so pathfinding/collision-respecting enemies are visible early in a run.

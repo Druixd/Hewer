@@ -32,6 +32,13 @@ const SWARM_BOMB_COLOR = 0xd4845a;
 const OBJECTIVE_TARGET_RADIUS_TILES = 34;
 const OBJECTIVE_TARGET_LIMIT = 80;
 const OBJECTIVE_WAVE_COOLDOWN = 8.5;
+const CHASE_PATH_MARGIN_TILES = 12;
+const CHASE_PATH_MAX_VISITS = 1500;
+
+interface PathTile {
+  x: number;
+  y: number;
+}
 
 export function updateGame(state: GameState, actions: InputActions, dt: number): void {
   state.events = [];
@@ -706,7 +713,7 @@ function updateEnemies(state: GameState, dt: number): void {
     }
 
     if (enemy.kind === "sparkSac") {
-      const dir = normalize({ x: state.player.x - enemy.x, y: state.player.y - enemy.y });
+      const dir = getChaseDirection(state, enemy, state.player, Math.max(8, enemy.radius * 0.72));
       enemy.vx = lerp(enemy.vx, dir.x * 78, 0.05);
       enemy.vy = lerp(enemy.vy, dir.y * 78, 0.05);
       const moved = moveEnemyWithCollision(state, enemy, enemy.vx * dt, enemy.vy * dt, 0.05);
@@ -724,7 +731,7 @@ function updateEnemies(state: GameState, dt: number): void {
     if (enemy.kind === "phaseMite") {
       enemy.cooldown = Math.max(0, enemy.cooldown - dt);
       enemy.timer += dt;
-      const playerDir = normalize({ x: state.player.x - enemy.x, y: state.player.y - enemy.y });
+      const playerDir = getChaseDirection(state, enemy, state.player, Math.max(8, enemy.radius * 0.72));
       const orbit = {
         x: -playerDir.y * Math.sin(enemy.timer * 2.4),
         y: playerDir.x * Math.sin(enemy.timer * 2.4)
@@ -754,7 +761,7 @@ function updateBoss(state: GameState, dt: number): void {
     return;
   }
 
-  const dir = normalize({ x: state.player.x - boss.x, y: state.player.y - boss.y });
+  const dir = getChaseDirection(state, boss, state.player, 28);
   const bossSpeed = boss.kind === "sentinelEye" ? 92 : 126;
   boss.vx = lerp(boss.vx, dir.x * bossSpeed, 0.035);
   boss.vy = lerp(boss.vy, dir.y * bossSpeed, 0.035);
@@ -1174,6 +1181,196 @@ function moveCircleWithCollision(
   }
 
   return { x: nextX, y: nextY, hitX, hitY };
+}
+
+function getChaseDirection(state: GameState, from: Vec2, to: Vec2, radius: number): Vec2 {
+  const direct = normalize({ x: to.x - from.x, y: to.y - from.y });
+  if (length(direct) === 0 || hasClearMovementLine(state, from, to, radius)) {
+    return direct;
+  }
+
+  const pathTarget = findPathWaypoint(state, from, to, radius);
+  if (!pathTarget) {
+    return direct;
+  }
+
+  const pathDirection = normalize({ x: pathTarget.x - from.x, y: pathTarget.y - from.y });
+  return length(pathDirection) === 0 ? direct : pathDirection;
+}
+
+function hasClearMovementLine(state: GameState, from: Vec2, to: Vec2, radius: number): boolean {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  const dist = Math.hypot(dx, dy);
+  if (dist <= 1) {
+    return true;
+  }
+
+  const steps = Math.ceil(dist / (TILE_SIZE * 0.5));
+  for (let step = 1; step <= steps; step += 1) {
+    const t = step / steps;
+    if (circleHitsSolid(state, from.x + dx * t, from.y + dy * t, radius)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function findPathWaypoint(state: GameState, from: Vec2, to: Vec2, radius: number): Vec2 | null {
+  const startTile = worldToTile(from);
+  const goalTile = findNearestNavigableTile(state, worldToTile(to), radius);
+  if (!goalTile) {
+    return null;
+  }
+
+  if (startTile.x === goalTile.x && startTile.y === goalTile.y) {
+    return {
+      x: goalTile.x * TILE_SIZE + TILE_SIZE / 2,
+      y: goalTile.y * TILE_SIZE + TILE_SIZE / 2
+    };
+  }
+
+  const minX = Math.max(1, Math.min(startTile.x, goalTile.x) - CHASE_PATH_MARGIN_TILES);
+  const maxX = Math.min(state.world.width - 2, Math.max(startTile.x, goalTile.x) + CHASE_PATH_MARGIN_TILES);
+  const minY = Math.max(1, Math.min(startTile.y, goalTile.y) - CHASE_PATH_MARGIN_TILES);
+  const maxY = Math.min(state.world.height - 2, Math.max(startTile.y, goalTile.y) + CHASE_PATH_MARGIN_TILES);
+  const goalKey = tileKey(goalTile);
+  const open: Array<PathTile & { f: number; g: number }> = [{ ...startTile, f: heuristic(startTile, goalTile), g: 0 }];
+  const cameFrom = new Map<string, string>();
+  const bestCost = new Map<string, number>([[tileKey(startTile), 0]]);
+  const closed = new Set<string>();
+  let visits = 0;
+
+  while (open.length > 0 && visits < CHASE_PATH_MAX_VISITS) {
+    let bestIndex = 0;
+    for (let index = 1; index < open.length; index += 1) {
+      if (open[index].f < open[bestIndex].f) {
+        bestIndex = index;
+      }
+    }
+
+    const current = open.splice(bestIndex, 1)[0];
+    const currentKey = tileKey(current);
+    if (closed.has(currentKey)) {
+      continue;
+    }
+
+    if (currentKey === goalKey) {
+      return pathFirstWaypoint(cameFrom, startTile, goalTile);
+    }
+
+    closed.add(currentKey);
+    visits += 1;
+
+    for (const neighbor of getPathNeighbors(current)) {
+      if (neighbor.x < minX || neighbor.x > maxX || neighbor.y < minY || neighbor.y > maxY) {
+        continue;
+      }
+      if (!isNavigableForRadius(state, neighbor, radius)) {
+        continue;
+      }
+
+      const neighborKey = tileKey(neighbor);
+      if (closed.has(neighborKey)) {
+        continue;
+      }
+
+      const nextCost = current.g + 1;
+      if (nextCost >= (bestCost.get(neighborKey) ?? Number.POSITIVE_INFINITY)) {
+        continue;
+      }
+
+      cameFrom.set(neighborKey, currentKey);
+      bestCost.set(neighborKey, nextCost);
+      open.push({
+        ...neighbor,
+        g: nextCost,
+        f: nextCost + heuristic(neighbor, goalTile)
+      });
+    }
+  }
+
+  return null;
+}
+
+function findNearestNavigableTile(state: GameState, target: PathTile, radius: number): PathTile | null {
+  if (isNavigableForRadius(state, target, radius)) {
+    return target;
+  }
+
+  for (let searchRadius = 1; searchRadius <= 5; searchRadius += 1) {
+    for (let y = target.y - searchRadius; y <= target.y + searchRadius; y += 1) {
+      for (let x = target.x - searchRadius; x <= target.x + searchRadius; x += 1) {
+        if (Math.abs(x - target.x) !== searchRadius && Math.abs(y - target.y) !== searchRadius) {
+          continue;
+        }
+
+        const candidate = { x, y };
+        if (isNavigableForRadius(state, candidate, radius)) {
+          return candidate;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function pathFirstWaypoint(cameFrom: Map<string, string>, start: PathTile, goal: PathTile): Vec2 | null {
+  const startKey = tileKey(start);
+  let currentKey = tileKey(goal);
+  let previousKey = currentKey;
+
+  while (cameFrom.has(currentKey) && cameFrom.get(currentKey) !== startKey) {
+    previousKey = currentKey;
+    currentKey = cameFrom.get(currentKey) ?? startKey;
+  }
+
+  if (cameFrom.get(currentKey) === startKey) {
+    previousKey = currentKey;
+  }
+
+  const nextTile = keyToTile(previousKey);
+  return {
+    x: nextTile.x * TILE_SIZE + TILE_SIZE / 2,
+    y: nextTile.y * TILE_SIZE + TILE_SIZE / 2
+  };
+}
+
+function getPathNeighbors(tile: PathTile): PathTile[] {
+  return [
+    { x: tile.x - 1, y: tile.y },
+    { x: tile.x + 1, y: tile.y },
+    { x: tile.x, y: tile.y - 1 },
+    { x: tile.x, y: tile.y + 1 }
+  ];
+}
+
+function isNavigableForRadius(state: GameState, tile: PathTile, radius: number): boolean {
+  const centerX = tile.x * TILE_SIZE + TILE_SIZE / 2;
+  const centerY = tile.y * TILE_SIZE + TILE_SIZE / 2;
+  return !isSolid(getTile(state.world, tile.x, tile.y)) && !circleHitsSolid(state, centerX, centerY, radius);
+}
+
+function worldToTile(point: Vec2): PathTile {
+  return {
+    x: Math.floor(point.x / TILE_SIZE),
+    y: Math.floor(point.y / TILE_SIZE)
+  };
+}
+
+function tileKey(tile: PathTile): string {
+  return `${tile.x},${tile.y}`;
+}
+
+function keyToTile(key: string): PathTile {
+  const [x, y] = key.split(",").map(Number);
+  return { x, y };
+}
+
+function heuristic(a: PathTile, b: PathTile): number {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
 function isValidEnemySpawn(state: GameState, x: number, y: number, radius: number): boolean {
