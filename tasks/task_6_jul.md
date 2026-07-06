@@ -56,3 +56,12 @@ Author: Nitish
 - [x] Verify the ore-row removal and action-slot width fix with `npm run typecheck` only.
 - [x] Increase lower-left hint key and action label text sizes while keeping the HUD slot footprint unchanged.
 - [x] Verify the hint typography update with `npm run typecheck` only.
+- [x] Add old-laptop performance optimizations for local tile visibility, chunked cave-edge refresh, throttled minimap/objective drawing, cached objective scans, and budgeted enemy pathfinding.
+- [x] Cache hot HUD updates for cargo, ability slots, task chips, purchase hints, and mining streak feedback.
+- [x] Add the F3 top-center FPS overlay with adaptive quality readout.
+- [x] Update `design.md` with UX-first performance guidance for older devices.
+- [x] Verify the performance and FPS overlay pass with `npm run typecheck` only.
+- [x] Reduce gameplay and HUD glow intensity by 30% while preserving readable cave lighting.
+- [x] Verify the glow reduction with `npm run typecheck` only.
+- [x] Reduce baked ore tile and ore pickup glow intensity by 30%.
+- [x] Verify the ore glow reduction with `npm run typecheck` only.

@@ -157,6 +157,8 @@ The minimap is a local navigation instrument, not a full level map. It should st
 
 The visual target is not a generic dashboard. The HUD should feel like functional mining ship instrumentation: compact bars, mineral counters, small state readouts, and restrained transitions. Strong motion is reserved for danger, impact, mineral collection, boss breakout, and rewards.
 
+Performance should protect playability before decoration. On older devices the game may reduce decorative glow intensity, particle burst counts, movement trail frequency, minimap refresh cadence, and other nonessential atmosphere, but mining feedback, enemy readability, pickups, collision, objective guidance, HUD state, and the F3 FPS display must remain clear and responsive.
+
 Browser identity should follow the same readable mining-instrument language. The favicon should stay legible at small tab sizes, use the HEWER mark or initial clearly, and pull from the dark hull, warm cream, copper, and cyan accent palette rather than decorative detail.
 
 The cave should not read as fully visible at all times. Keep the far environment dark, use local visibility around the player, and make important ores, enemies, bombs, and hazards read through additive emission-style glow. Avoid relying on sprite opacity as the primary lighting language.

@@ -22,7 +22,7 @@ import { TILE_SIZE, type BlockId, type GameEvent, type GameState, type InputActi
 import { getTile, isSolid, worldBounds } from "../../game/simulation/world";
 import { getHudController } from "../../ui/hud/HudController";
 
-type KeyMap = Record<"W" | "A" | "S" | "D" | "UP" | "DOWN" | "LEFT" | "RIGHT" | "SPACE" | "SHIFT" | "ESC" | "E", Phaser.Input.Keyboard.Key>;
+type KeyMap = Record<"W" | "A" | "S" | "D" | "UP" | "DOWN" | "LEFT" | "RIGHT" | "SPACE" | "SHIFT" | "ESC" | "E" | "F3", Phaser.Input.Keyboard.Key>;
 const MINIMAP_SIZE = 110;
 const MINIMAP_MARGIN = 20;
 const MINIMAP_ZOOM = 0.08;
@@ -30,6 +30,16 @@ const MINIMAP_RADIUS = MINIMAP_SIZE / MINIMAP_ZOOM / 2;
 const MINIMAP_TILE_RANGE = Math.ceil(MINIMAP_RADIUS / TILE_SIZE) + 2;
 const TILE_VARIANT_COUNT = 4;
 const PLAYER_SHIP_VISUAL_SCALE = 0.84;
+const LOCAL_VISIBILITY_RADIUS = 900;
+const MINIMAP_INTERVAL_MS = 125;
+const MINIMAP_LOW_QUALITY_INTERVAL_MS = 220;
+const OBJECTIVE_DRAW_INTERVAL_MS = 140;
+const CAVE_EDGE_CHUNK_SIZE = 24;
+let glowAlphaScale = 0.7;
+
+function glowAlpha(alpha: number): number {
+  return Phaser.Math.Clamp(alpha * glowAlphaScale, 0, 1);
+}
 
 export class GameplayScene extends Phaser.Scene {
   private state!: GameState;
@@ -43,6 +53,8 @@ export class GameplayScene extends Phaser.Scene {
   private objectiveGraphics!: Phaser.GameObjects.Graphics;
   private playerLight!: Phaser.GameObjects.Image;
   private caveEdgeGraphics!: Phaser.GameObjects.Graphics;
+  private caveEdgeChunks = new Map<string, Phaser.GameObjects.Graphics>();
+  private caveEdgeAlpha = 0.78;
   private tileSprites: Array<Phaser.GameObjects.Image | null> = [];
   private tileGlows: Array<Phaser.GameObjects.Image[] | null> = [];
   private enemySprites = new Map<string, Phaser.GameObjects.Image>();
@@ -60,6 +72,23 @@ export class GameplayScene extends Phaser.Scene {
   private lastTrailTime = 0;
   private minimap!: Phaser.Cameras.Scene2D.Camera;
   private minimapGraphics!: Phaser.GameObjects.Graphics;
+  private activeTileVisibility = new Set<number>();
+  private lastVisibilityCenterTileX = Number.NaN;
+  private lastVisibilityCenterTileY = Number.NaN;
+  private lastMinimapTileX = Number.NaN;
+  private lastMinimapTileY = Number.NaN;
+  private lastMinimapDrawAt = 0;
+  private lastObjectiveSignature = "";
+  private lastObjectiveDrawAt = 0;
+  private fpsOverlay: HTMLDivElement | null = null;
+  private fpsVisible = false;
+  private fpsFrameCount = 0;
+  private fpsSampleMs = 0;
+  private fpsLastValue = 0;
+  private frameMsLastValue = 0;
+  private lowFpsSamples = 0;
+  private highFpsSamples = 0;
+  private qualityLevel: 0 | 1 | 2 = 0;
 
   private backdropRect!: Phaser.GameObjects.Rectangle;
   private starsGraphics!: Phaser.GameObjects.Graphics;
@@ -98,9 +127,25 @@ export class GameplayScene extends Phaser.Scene {
     this.screenHeight = 0;
     this.pendingStoreResultAt = 0;
     this.storeShuttle = null;
+    this.lastVisibilityCenterTileX = Number.NaN;
+    this.lastVisibilityCenterTileY = Number.NaN;
+    this.lastMinimapTileX = Number.NaN;
+    this.lastMinimapTileY = Number.NaN;
+    this.lastMinimapDrawAt = 0;
+    this.lastObjectiveSignature = "";
+    this.lastObjectiveDrawAt = 0;
+    this.fpsVisible = false;
+    this.fpsFrameCount = 0;
+    this.fpsSampleMs = 0;
+    this.fpsLastValue = 0;
+    this.frameMsLastValue = 0;
+    this.lowFpsSamples = 0;
+    this.highFpsSamples = 0;
+    this.qualityLevel = 0;
+    glowAlphaScale = 0.7;
 
     this.input.mouse?.disableContextMenu();
-    this.keys = this.input.keyboard!.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,SHIFT,ESC,E") as KeyMap;
+    this.keys = this.input.keyboard!.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,SHIFT,ESC,E,F3") as KeyMap;
 
     this.createWorldView();
     this.createActors();
@@ -113,6 +158,9 @@ export class GameplayScene extends Phaser.Scene {
   private resetViewCaches(): void {
     this.tileSprites = [];
     this.tileGlows = [];
+    this.activeTileVisibility.clear();
+    this.caveEdgeChunks.forEach((chunk) => chunk.destroy());
+    this.caveEdgeChunks.clear();
     this.enemySprites.clear();
     this.enemyGlowSprites.clear();
     this.enemyEliteRings.clear();
@@ -126,10 +174,16 @@ export class GameplayScene extends Phaser.Scene {
     this.parallaxCaveLayers = [];
     this.atmosphereOverlay?.remove();
     this.atmosphereOverlay = null;
+    this.fpsOverlay?.remove();
+    this.fpsOverlay = null;
   }
 
   update(_time: number, deltaMs: number): void {
     const hud = getHudController();
+    this.updatePerformanceMonitor(deltaMs);
+    if (Phaser.Input.Keyboard.JustDown(this.keys.F3)) {
+      this.toggleFpsOverlay();
+    }
     if (Phaser.Input.Keyboard.JustDown(this.keys.ESC)) {
       this.isPaused = !this.isPaused;
       hud.setPaused(this.isPaused);
@@ -148,7 +202,7 @@ export class GameplayScene extends Phaser.Scene {
     this.syncTilesFromEvents(this.state.events);
     this.syncActors();
     this.drawTransientWorld();
-    this.drawMinimap();
+    this.maybeDrawMinimap();
     this.updateMoodPresentation();
     this.audioFeedback.updateMood(this.state.threat.mood);
     this.audioFeedback.updateHull(this.state.player.hull / this.state.player.maxHull);
@@ -156,6 +210,91 @@ export class GameplayScene extends Phaser.Scene {
     hud.update(this.state, this.progress);
 
     this.maybeShowRunResult(hud);
+  }
+
+  private updatePerformanceMonitor(deltaMs: number): void {
+    this.fpsFrameCount += 1;
+    this.fpsSampleMs += deltaMs;
+    if (this.fpsSampleMs < 1000) {
+      return;
+    }
+
+    const fps = (this.fpsFrameCount * 1000) / this.fpsSampleMs;
+    this.fpsLastValue = fps;
+    this.frameMsLastValue = this.fpsSampleMs / Math.max(1, this.fpsFrameCount);
+    this.fpsFrameCount = 0;
+    this.fpsSampleMs = 0;
+
+    if (fps < 42) {
+      this.lowFpsSamples += 1;
+      this.highFpsSamples = 0;
+    } else if (fps > 54) {
+      this.highFpsSamples += 1;
+      this.lowFpsSamples = 0;
+    } else {
+      this.lowFpsSamples = 0;
+      this.highFpsSamples = 0;
+    }
+
+    if (this.lowFpsSamples >= 3 && this.qualityLevel < 2) {
+      this.qualityLevel = this.qualityLevel === 0 ? 1 : 2;
+      this.lowFpsSamples = 0;
+      this.applyAdaptiveQuality();
+    } else if (this.highFpsSamples >= 6 && this.qualityLevel > 0) {
+      this.qualityLevel = this.qualityLevel === 2 ? 1 : 0;
+      this.highFpsSamples = 0;
+      this.applyAdaptiveQuality();
+    }
+
+    this.updateFpsOverlayText();
+  }
+
+  private applyAdaptiveQuality(): void {
+    glowAlphaScale = this.qualityLevel === 2 ? 0.48 : this.qualityLevel === 1 ? 0.58 : 0.7;
+  }
+
+  private toggleFpsOverlay(): void {
+    this.fpsVisible = !this.fpsVisible;
+    this.fpsOverlay?.classList.toggle("is-hidden", !this.fpsVisible);
+    this.updateFpsOverlayText();
+  }
+
+  private updateFpsOverlayText(): void {
+    if (!this.fpsOverlay || !this.fpsVisible) {
+      return;
+    }
+
+    const quality = this.qualityLevel === 0 ? "Q0" : this.qualityLevel === 1 ? "Q1" : "Q2";
+    this.fpsOverlay.textContent = `${Math.round(this.fpsLastValue)} FPS / ${this.frameMsLastValue.toFixed(1)} MS / ${quality}`;
+  }
+
+  private maybeDrawMinimap(): void {
+    const playerTileX = Math.floor(this.state.player.x / TILE_SIZE);
+    const playerTileY = Math.floor(this.state.player.y / TILE_SIZE);
+    const interval = this.qualityLevel > 0 ? MINIMAP_LOW_QUALITY_INTERVAL_MS : MINIMAP_INTERVAL_MS;
+    const tileChanged = playerTileX !== this.lastMinimapTileX || playerTileY !== this.lastMinimapTileY;
+    if (!tileChanged && this.time.now - this.lastMinimapDrawAt < interval) {
+      return;
+    }
+
+    this.lastMinimapTileX = playerTileX;
+    this.lastMinimapTileY = playerTileY;
+    this.lastMinimapDrawAt = this.time.now;
+    this.drawMinimap();
+  }
+
+  private qualityParticleCount(count: number): number {
+    if (this.qualityLevel === 2) {
+      return Math.max(1, Math.ceil(count * 0.45));
+    }
+    if (this.qualityLevel === 1) {
+      return Math.max(1, Math.ceil(count * 0.68));
+    }
+    return count;
+  }
+
+  private trailIntervalMs(): number {
+    return this.qualityLevel === 2 ? 68 : this.qualityLevel === 1 ? 42 : 24;
   }
 
   private maybeShowRunResult(hud = getHudController()): void {
@@ -302,7 +441,8 @@ export class GameplayScene extends Phaser.Scene {
           .setDepth(0)
           .setOrigin(0.5)
           .setScale(1.35)
-          .setAlpha(0.13)
+          .setAlpha(glowAlpha(0.13))
+          .setVisible(false)
           .setTint(glowColor)
           .setBlendMode(Phaser.BlendModes.ADD);
         
@@ -310,7 +450,8 @@ export class GameplayScene extends Phaser.Scene {
           .setDepth(3)
           .setOrigin(0.5)
           .setScale(0.58)
-          .setAlpha(0.28)
+          .setAlpha(glowAlpha(0.28))
+          .setVisible(false)
           .setTint(glowColor)
           .setBlendMode(Phaser.BlendModes.ADD);
 
@@ -320,9 +461,8 @@ export class GameplayScene extends Phaser.Scene {
       const texture = TEXTURES.tile(tile.type, this.state.world.territory, tile.cracked, tileVisualVariant(this.state.world.seed, tile.x, tile.y, tile.type, tile.cracked));
       const sprite = this.add.image(x, y, texture).setDepth(2);
 
-      // Keep cave mass visible without competing with ore, ship, and enemies.
-      const alpha = tile.type === "basalt" ? 1 : tile.type === "ancient" ? 0.96 : 1.0;
-      sprite.setAlpha(alpha);
+      // Start dim; the local visibility pass restores nearby tiles each frame.
+      sprite.setAlpha(0.02);
       sprite.setScale(tile.type === "basalt" || tile.type === "ancient" ? 1.045 : 1.02);
       sprite.setBlendMode(Phaser.BlendModes.NORMAL);
       return sprite;
@@ -390,33 +530,84 @@ export class GameplayScene extends Phaser.Scene {
   }
 
   private drawCaveEdges(): void {
-    this.caveEdgeGraphics = this.add.graphics().setDepth(4);
+    this.caveEdgeChunks.forEach((chunk) => chunk.destroy());
+    this.caveEdgeChunks.clear();
+    this.caveEdgeGraphics = this.add.graphics().setDepth(4).setVisible(false);
     this.minimap?.ignore(this.caveEdgeGraphics);
-    this.caveEdgeGraphics.lineStyle(2, 0x7f88a8, 0.34);
 
-    for (const tile of this.state.world.tiles) {
-      if (!isSolid(tile)) {
-        continue;
-      }
-
-      const left = tile.x * TILE_SIZE;
-      const top = tile.y * TILE_SIZE;
-      const right = left + TILE_SIZE;
-      const bottom = top + TILE_SIZE;
-
-      if (!isSolid(getTile(this.state.world, tile.x - 1, tile.y))) {
-        this.caveEdgeGraphics.lineBetween(left, top, left, bottom);
-      }
-      if (!isSolid(getTile(this.state.world, tile.x + 1, tile.y))) {
-        this.caveEdgeGraphics.lineBetween(right, top, right, bottom);
-      }
-      if (!isSolid(getTile(this.state.world, tile.x, tile.y - 1))) {
-        this.caveEdgeGraphics.lineBetween(left, top, right, top);
-      }
-      if (!isSolid(getTile(this.state.world, tile.x, tile.y + 1))) {
-        this.caveEdgeGraphics.lineBetween(left, bottom, right, bottom);
+    const chunkColumns = Math.ceil(this.state.world.width / CAVE_EDGE_CHUNK_SIZE);
+    const chunkRows = Math.ceil(this.state.world.height / CAVE_EDGE_CHUNK_SIZE);
+    for (let chunkY = 0; chunkY < chunkRows; chunkY += 1) {
+      for (let chunkX = 0; chunkX < chunkColumns; chunkX += 1) {
+        this.redrawCaveEdgeChunk(chunkX, chunkY);
       }
     }
+  }
+
+  private redrawCaveEdgeChunk(chunkX: number, chunkY: number): void {
+    if (chunkX < 0 || chunkY < 0) {
+      return;
+    }
+
+    const startX = chunkX * CAVE_EDGE_CHUNK_SIZE;
+    const startY = chunkY * CAVE_EDGE_CHUNK_SIZE;
+    if (startX >= this.state.world.width || startY >= this.state.world.height) {
+      return;
+    }
+
+    const key = `${chunkX},${chunkY}`;
+    let graphics = this.caveEdgeChunks.get(key);
+    if (!graphics) {
+      graphics = this.add.graphics().setDepth(4).setAlpha(this.caveEdgeAlpha);
+      this.caveEdgeChunks.set(key, graphics);
+      this.minimap?.ignore(graphics);
+    }
+
+    graphics.clear();
+    graphics.lineStyle(2, 0x7f88a8, 0.34);
+
+    const endX = Math.min(this.state.world.width, startX + CAVE_EDGE_CHUNK_SIZE);
+    const endY = Math.min(this.state.world.height, startY + CAVE_EDGE_CHUNK_SIZE);
+    for (let tileY = startY; tileY < endY; tileY += 1) {
+      for (let tileX = startX; tileX < endX; tileX += 1) {
+        const tile = getTile(this.state.world, tileX, tileY);
+        if (!isSolid(tile)) {
+          continue;
+        }
+
+        const left = tile.x * TILE_SIZE;
+        const top = tile.y * TILE_SIZE;
+        const right = left + TILE_SIZE;
+        const bottom = top + TILE_SIZE;
+
+        if (!isSolid(getTile(this.state.world, tile.x - 1, tile.y))) {
+          graphics.lineBetween(left, top, left, bottom);
+        }
+        if (!isSolid(getTile(this.state.world, tile.x + 1, tile.y))) {
+          graphics.lineBetween(right, top, right, bottom);
+        }
+        if (!isSolid(getTile(this.state.world, tile.x, tile.y - 1))) {
+          graphics.lineBetween(left, top, right, top);
+        }
+        if (!isSolid(getTile(this.state.world, tile.x, tile.y + 1))) {
+          graphics.lineBetween(left, bottom, right, bottom);
+        }
+      }
+    }
+  }
+
+  private refreshCaveEdgesNearTile(tileX: number, tileY: number): void {
+    const chunks = new Set<string>();
+    for (let y = tileY - 1; y <= tileY + 1; y += 1) {
+      for (let x = tileX - 1; x <= tileX + 1; x += 1) {
+        chunks.add(`${Math.floor(x / CAVE_EDGE_CHUNK_SIZE)},${Math.floor(y / CAVE_EDGE_CHUNK_SIZE)}`);
+      }
+    }
+
+    chunks.forEach((key) => {
+      const [chunkX, chunkY] = key.split(",").map(Number);
+      this.redrawCaveEdgeChunk(chunkX, chunkY);
+    });
   }
 
   private createActors(): void {
@@ -455,7 +646,7 @@ export class GameplayScene extends Phaser.Scene {
       .setDepth(5)
       .setOrigin(0.5)
       .setScale(4.1)
-      .setAlpha(0.34)
+      .setAlpha(glowAlpha(0.34))
       .setTint(0xc4a86e)
       .setBlendMode(Phaser.BlendModes.ADD);
     this.reticle = this.add.image(this.state.player.x, this.state.player.y, TEXTURES.reticle).setDepth(20).setBlendMode(Phaser.BlendModes.ADD);
@@ -608,6 +799,7 @@ export class GameplayScene extends Phaser.Scene {
 
   private createAtmosphereOverlay(): void {
     this.atmosphereOverlay?.remove();
+    this.fpsOverlay?.remove();
     const app = document.querySelector<HTMLElement>("#app");
     if (!app) {
       return;
@@ -617,10 +809,21 @@ export class GameplayScene extends Phaser.Scene {
     overlay.className = "game-atmosphere-overlay";
     app.appendChild(overlay);
     this.atmosphereOverlay = overlay;
+
+    const fps = document.createElement("div");
+    fps.className = "game-fps-overlay is-hidden";
+    fps.textContent = "0 FPS / 0.0 MS / Q0";
+    app.appendChild(fps);
+    this.fpsOverlay = fps;
+
     this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
       overlay.remove();
       if (this.atmosphereOverlay === overlay) {
         this.atmosphereOverlay = null;
+      }
+      fps.remove();
+      if (this.fpsOverlay === fps) {
+        this.fpsOverlay = null;
       }
     });
   }
@@ -733,12 +936,12 @@ export class GameplayScene extends Phaser.Scene {
     const movementGlow = Phaser.Math.Clamp(speed / 520, 0, 0.22);
     const lightPulse = Math.sin(this.state.elapsed * 3.2) * 0.025;
     this.playerLight.setScale((player.invulnerableTimer > 0 ? 4.8 : 4.1) + movementGlow);
-    this.playerLight.setAlpha((player.invulnerableTimer > 0 ? 0.46 : 0.34) + movementGlow * 0.36 + lightPulse);
+    this.playerLight.setAlpha(glowAlpha((player.invulnerableTimer > 0 ? 0.46 : 0.34) + movementGlow * 0.36 + lightPulse));
     const aim = this.currentAimWorldPoint();
     this.reticle.setPosition(aim.x, aim.y);
     this.extractionGlow.setAlpha(0);
 
-    if (speed > 35 && this.time.now - this.lastTrailTime > 24) {
+    if (speed > 35 && this.time.now - this.lastTrailTime > this.trailIntervalMs()) {
       this.lastTrailTime = this.time.now;
       this.spawnPlayerTrailLine(player.x, player.y, player.vx, player.vy, speed);
     }
@@ -755,6 +958,12 @@ export class GameplayScene extends Phaser.Scene {
     const player = this.state.player;
     const inner = 230;
     const outer = 760;
+    const centerTileX = Math.floor(player.x / TILE_SIZE);
+    const centerTileY = Math.floor(player.y / TILE_SIZE);
+    const zoom = this.cameras.main.zoom || 1;
+    const viewRadius = Math.max(LOCAL_VISIBILITY_RADIUS, Math.hypot(this.scale.width, this.scale.height) / (2 * zoom) + 180);
+    const tileRange = Math.ceil(viewRadius / TILE_SIZE) + 2;
+    const nextActive = new Set<number>();
 
     const alphaFor = (x: number, y: number, minAlpha: number, maxAlpha: number) => {
       const dist = Math.hypot(x - player.x, y - player.y);
@@ -762,23 +971,54 @@ export class GameplayScene extends Phaser.Scene {
       return Phaser.Math.Linear(maxAlpha, minAlpha, t);
     };
 
-    for (let index = 0; index < this.tileSprites.length; index += 1) {
-      const sprite = this.tileSprites[index];
-      if (!sprite?.visible) {
+    for (let y = centerTileY - tileRange; y <= centerTileY + tileRange; y += 1) {
+      if (y < 0 || y >= this.state.world.height) {
         continue;
       }
-      const tile = this.state.world.tiles[index];
-      const maxAlpha = tile.type === "ancient" ? 0.88 : tile.type === "basalt" ? 0.92 : 1;
-      sprite.setAlpha(alphaFor(sprite.x, sprite.y, tile.type === "basalt" || tile.type === "ancient" ? 0.035 : 0.09, maxAlpha));
-      const glows = this.tileGlows[index];
-      glows?.forEach((glow) => glow.setAlpha(alphaFor(glow.x, glow.y, 0.01, tile.type === "basalt" ? 0.08 : 0.28)));
+      for (let x = centerTileX - tileRange; x <= centerTileX + tileRange; x += 1) {
+        if (x < 0 || x >= this.state.world.width) {
+          continue;
+        }
+        const dx = x - centerTileX;
+        const dy = y - centerTileY;
+        if (dx * dx + dy * dy > tileRange * tileRange) {
+          continue;
+        }
+        const index = y * this.state.world.width + x;
+        const sprite = this.tileSprites[index];
+        if (!sprite?.visible) {
+          continue;
+        }
+        nextActive.add(index);
+        const tile = this.state.world.tiles[index];
+        const maxAlpha = tile.type === "ancient" ? 0.88 : tile.type === "basalt" ? 0.92 : 1;
+        sprite.setAlpha(alphaFor(sprite.x, sprite.y, tile.type === "basalt" || tile.type === "ancient" ? 0.035 : 0.09, maxAlpha));
+        const glows = this.tileGlows[index];
+        glows?.forEach((glow) => {
+          glow.setVisible(true);
+          glow.setAlpha(glowAlpha(alphaFor(glow.x, glow.y, 0.01, tile.type === "basalt" ? 0.08 : 0.28)));
+        });
+      }
     }
 
+    for (const index of this.activeTileVisibility) {
+      if (nextActive.has(index)) {
+        continue;
+      }
+      const sprite = this.tileSprites[index];
+      sprite?.setAlpha(0.02);
+      this.tileGlows[index]?.forEach((glow) => glow.setVisible(false));
+    }
+    this.activeTileVisibility = nextActive;
+    this.lastVisibilityCenterTileX = centerTileX;
+    this.lastVisibilityCenterTileY = centerTileY;
+
     this.enemySprites.forEach((sprite) => sprite.setAlpha(alphaFor(sprite.x, sprite.y, 0.18, 1)));
-    this.enemyGlowSprites.forEach((sprite) => sprite.setAlpha(alphaFor(sprite.x, sprite.y, 0.04, 0.42)));
+    this.enemyGlowSprites.forEach((sprite) => sprite.setAlpha(glowAlpha(alphaFor(sprite.x, sprite.y, 0.04, 0.42))));
     this.pickupSprites.forEach((sprite) => sprite.setAlpha(alphaFor(sprite.x, sprite.y, 0.2, 1)));
-    this.pickupGlowSprites.forEach((sprite) => sprite.setAlpha(alphaFor(sprite.x, sprite.y, 0.04, 0.52)));
-    this.caveEdgeGraphics?.setAlpha(alphaFor(player.x, player.y, 0.48, 0.78));
+    this.pickupGlowSprites.forEach((sprite) => sprite.setAlpha(glowAlpha(alphaFor(sprite.x, sprite.y, 0.04, 0.52))));
+    this.caveEdgeAlpha = alphaFor(player.x, player.y, 0.48, 0.78);
+    this.caveEdgeChunks.forEach((chunk) => chunk.setAlpha(this.caveEdgeAlpha));
   }
 
   private updateMoodPresentation(): void {
@@ -831,15 +1071,15 @@ export class GameplayScene extends Phaser.Scene {
 
     const trail = this.add.graphics()
       .setDepth(13)
-      .setAlpha(0.92)
+      .setAlpha(glowAlpha(0.92))
       .setBlendMode(Phaser.BlendModes.ADD);
 
-    trail.lineStyle(7, 0xe8c86a, 0.2);
+    trail.lineStyle(7, 0xe8c86a, glowAlpha(0.2));
     trail.beginPath();
     trail.moveTo(noseX, noseY);
     trail.lineTo(tailX, tailY);
     trail.strokePath();
-    trail.lineStyle(3, 0xfff5d7, 0.72);
+    trail.lineStyle(3, 0xfff5d7, glowAlpha(0.72));
     trail.beginPath();
     trail.moveTo(noseX, noseY);
     trail.lineTo(tailX, tailY);
@@ -869,7 +1109,7 @@ export class GameplayScene extends Phaser.Scene {
           .setDepth(10)
           .setTint(enemyGlowColor(enemy.kind))
           .setScale(enemy.kind === "arcWarden" ? 1.15 : 0.84)
-          .setAlpha(0.32)
+          .setAlpha(glowAlpha(0.32))
           .setBlendMode(Phaser.BlendModes.ADD);
         sprite = this.add.image(enemy.x, enemy.y, TEXTURES.enemy(enemy.kind)).setDepth(12);
         this.enemySprites.set(enemy.id, sprite);
@@ -902,7 +1142,7 @@ export class GameplayScene extends Phaser.Scene {
       glow?.setPosition(enemy.x, enemy.y);
       glow?.setTint(enemy.elite ? 0xf0d38a : enemyGlowColor(enemy.kind));
       glow?.setScale(((enemy.kind === "arcWarden" ? 1.18 : 0.86) + activePulse) * (enemy.elite ? 1.18 : 1));
-      glow?.setAlpha(0.28 + activePulse + glowPulse + (enemy.elite ? 0.1 : 0));
+      glow?.setAlpha(glowAlpha(0.28 + activePulse + glowPulse + (enemy.elite ? 0.1 : 0)));
       sprite.setPosition(enemy.x, enemy.y);
       sprite.setRotation(enemy.kind === "prismStalker" ? Math.atan2(enemy.vy, enemy.vx) : enemy.timer);
       sprite.setAlpha(enemy.state === "windup" ? 0.72 : 1);
@@ -945,7 +1185,7 @@ export class GameplayScene extends Phaser.Scene {
           .setDepth(9)
           .setTint(pickupColor)
           .setScale(0.54)
-          .setAlpha(0.32)
+          .setAlpha(glowAlpha(0.32))
           .setBlendMode(Phaser.BlendModes.ADD);
         sprite = this.add.image(pickup.x, pickup.y, textureForPickup(pickup)).setDepth(11);
         this.pickupSprites.set(pickup.id, sprite);
@@ -957,7 +1197,7 @@ export class GameplayScene extends Phaser.Scene {
       const pickupPulse = pickup.magnetized ? 0.16 : Math.sin(this.state.elapsed * 5 + pickup.age) * 0.03;
       glow?.setPosition(pickup.x, pickup.y);
       glow?.setScale(pickup.magnetized ? 0.78 : 0.56);
-      glow?.setAlpha(0.3 + pickupPulse);
+      glow?.setAlpha(glowAlpha(0.3 + pickupPulse));
       sprite.setPosition(pickup.x, pickup.y);
       sprite.setRotation(pickup.age * 4);
       sprite.setScale(pickup.magnetized ? 1.1 : 0.92);
@@ -983,7 +1223,7 @@ export class GameplayScene extends Phaser.Scene {
           .setDepth(13)
           .setTint(projectile.color)
           .setScale(0.44)
-          .setAlpha(0.58)
+          .setAlpha(glowAlpha(0.58))
           .setBlendMode(Phaser.BlendModes.ADD);
         const core = this.add.image(projectile.x, projectile.y, TEXTURES.particleAmber)
           .setDepth(16)
@@ -1004,7 +1244,7 @@ export class GameplayScene extends Phaser.Scene {
       sprites.core.setAlpha(0.72 + life * 0.28);
       sprites.glow.setPosition(projectile.x, projectile.y);
       sprites.glow.setScale(projectile.owner === "enemy" ? 0.55 + life * 0.42 : 0.34 + life * 0.32);
-      sprites.glow.setAlpha(projectile.owner === "enemy" ? 0.28 + life * 0.5 : 0.18 + life * 0.42);
+      sprites.glow.setAlpha(glowAlpha(projectile.owner === "enemy" ? 0.28 + life * 0.5 : 0.18 + life * 0.42));
     }
 
     for (const [id, sprites] of this.projectileSprites) {
@@ -1026,7 +1266,7 @@ export class GameplayScene extends Phaser.Scene {
           .setDepth(10)
           .setScale(0.8)
           .setTint(bomb.color)
-          .setAlpha(0.58)
+          .setAlpha(glowAlpha(0.58))
           .setBlendMode(Phaser.BlendModes.ADD);
         const core = this.add.image(bomb.x, bomb.y, TEXTURES.bombCore)
           .setDepth(15)
@@ -1098,11 +1338,25 @@ export class GameplayScene extends Phaser.Scene {
   }
 
   private drawObjectiveTargets(): void {
-    this.objectiveGraphics.clear();
     const focusedOre = this.state.mission.focusedOre;
     if (!focusedOre || this.state.objectiveTargets.length === 0) {
+      if (this.lastObjectiveSignature !== "") {
+        this.objectiveGraphics.clear();
+        this.lastObjectiveSignature = "";
+      }
       return;
     }
+
+    const playerTileX = Math.floor(this.state.player.x / TILE_SIZE);
+    const playerTileY = Math.floor(this.state.player.y / TILE_SIZE);
+    const signature = `${focusedOre}:${playerTileX},${playerTileY}:${this.state.objectiveTargets.map((target) => `${target.tileX},${target.tileY}`).join("|")}`;
+    if (signature === this.lastObjectiveSignature && this.time.now - this.lastObjectiveDrawAt < OBJECTIVE_DRAW_INTERVAL_MS) {
+      return;
+    }
+
+    this.lastObjectiveSignature = signature;
+    this.lastObjectiveDrawAt = this.time.now;
+    this.objectiveGraphics.clear();
 
     const pulse = 0.45 + Math.sin(this.state.elapsed * 5.8) * 0.18;
     const lineAlpha = Phaser.Math.Clamp(pulse, 0.18, 0.68);
@@ -1123,9 +1377,9 @@ export class GameplayScene extends Phaser.Scene {
           : target.ore === "voltaic"
             ? 0x5ab8a8
             : 0xc47a8a;
-      this.objectiveGraphics.lineStyle(2, color, lineAlpha);
+      this.objectiveGraphics.lineStyle(2, color, glowAlpha(lineAlpha));
       this.objectiveGraphics.strokeRoundedRect(target.tileX * TILE_SIZE + 2, target.tileY * TILE_SIZE + 2, TILE_SIZE - 4, TILE_SIZE - 4, 4);
-      this.objectiveGraphics.fillStyle(color, 0.035 + lineAlpha * 0.035);
+      this.objectiveGraphics.fillStyle(color, glowAlpha(0.035 + lineAlpha * 0.035));
       this.objectiveGraphics.fillRoundedRect(target.tileX * TILE_SIZE + 3, target.tileY * TILE_SIZE + 3, TILE_SIZE - 6, TILE_SIZE - 6, 3);
     }
   }
@@ -1139,11 +1393,11 @@ export class GameplayScene extends Phaser.Scene {
 
     const color = beam.heat === "high" ? 0xd4845a : 0x5ab8a8;
     const pulse = beam.heat === "high" ? 1 + Math.sin(this.state.elapsed * 34) * 0.16 : 1;
-    this.beamGraphics.lineStyle(beam.heat === "high" ? 12 : 8, color, beam.heat === "high" ? 0.24 : 0.18);
+    this.beamGraphics.lineStyle(beam.heat === "high" ? 12 : 8, color, glowAlpha(beam.heat === "high" ? 0.24 : 0.18));
     this.beamGraphics.lineBetween(beam.x1, beam.y1, beam.x2, beam.y2);
-    this.beamGraphics.lineStyle(beam.heat === "high" ? 4.5 * pulse : 3, color, 0.95);
+    this.beamGraphics.lineStyle(beam.heat === "high" ? 4.5 * pulse : 3, color, glowAlpha(0.95));
     this.beamGraphics.lineBetween(beam.x1, beam.y1, beam.x2, beam.y2);
-    this.beamGraphics.fillStyle(0xffffff, 0.9);
+    this.beamGraphics.fillStyle(0xffffff, glowAlpha(0.9));
     this.beamGraphics.fillCircle(beam.x2, beam.y2, beam.heat === "high" ? 7 * pulse : 4);
   }
 
@@ -1151,9 +1405,9 @@ export class GameplayScene extends Phaser.Scene {
     this.fieldGraphics.clear();
     if (this.state.player.shieldActiveTimer > 0 && this.state.player.shield > 0) {
       const shieldRatio = this.state.player.shield / this.state.player.shieldMax;
-      this.fieldGraphics.lineStyle(3, 0x5ab8a8, 0.42 + shieldRatio * 0.28);
+      this.fieldGraphics.lineStyle(3, 0x5ab8a8, glowAlpha(0.42 + shieldRatio * 0.28));
       this.fieldGraphics.strokeCircle(this.state.player.x, this.state.player.y, 34 + Math.sin(this.state.elapsed * 12) * 2);
-      this.fieldGraphics.fillStyle(0x5ab8a8, 0.035 + shieldRatio * 0.035);
+      this.fieldGraphics.fillStyle(0x5ab8a8, glowAlpha(0.035 + shieldRatio * 0.035));
       this.fieldGraphics.fillCircle(this.state.player.x, this.state.player.y, 34);
     }
     for (const enemy of this.state.enemies) {
@@ -1162,7 +1416,7 @@ export class GameplayScene extends Phaser.Scene {
       }
 
       const active = enemy.state === "pulsing";
-      this.fieldGraphics.lineStyle(active ? 2 : 1, 0x6ec4b8, active ? 0.48 : 0.18);
+      this.fieldGraphics.lineStyle(active ? 2 : 1, 0x6ec4b8, glowAlpha(active ? 0.48 : 0.18));
       this.fieldGraphics.strokeCircle(enemy.x, enemy.y, active ? 70 : 44);
     }
   }
@@ -1172,22 +1426,21 @@ export class GameplayScene extends Phaser.Scene {
     for (const hazard of this.state.hazards) {
       if (hazard.kind === "lightning") {
         const charged = hazard.age >= hazard.damageAt;
-        this.hazardGraphics.lineStyle(charged ? 7 : 3, charged ? 0xf0e4cc : 0x8a6db8, charged ? 0.88 : 0.28);
+        this.hazardGraphics.lineStyle(charged ? 7 : 3, charged ? 0xf0e4cc : 0x8a6db8, glowAlpha(charged ? 0.88 : 0.28));
         this.hazardGraphics.lineBetween(hazard.x1, hazard.y1, hazard.x2, hazard.y2);
       } else {
         const progress = hazard.age / hazard.duration;
         const color = hazard.kind === "swarmExplosion" ? 0xe8c86a : 0xd4845a;
         const alpha = hazard.kind === "swarmExplosion" ? 0.22 : 0.14;
-        this.hazardGraphics.lineStyle(hazard.kind === "swarmExplosion" ? 5 : 3, color, 1 - progress);
+        this.hazardGraphics.lineStyle(hazard.kind === "swarmExplosion" ? 5 : 3, color, glowAlpha(1 - progress));
         this.hazardGraphics.strokeCircle(hazard.x1, hazard.y1, hazard.radius * progress);
-        this.hazardGraphics.fillStyle(color, alpha * (1 - progress));
+        this.hazardGraphics.fillStyle(color, glowAlpha(alpha * (1 - progress)));
         this.hazardGraphics.fillCircle(hazard.x1, hazard.y1, hazard.radius * progress);
       }
     }
   }
 
   private syncTilesFromEvents(events: GameEvent[]): void {
-    let edgeRefreshNeeded = false;
     for (const event of events) {
       if (event.type !== "tile-broken") {
         continue;
@@ -1206,12 +1459,7 @@ export class GameplayScene extends Phaser.Scene {
         this.tileGlows[idx] = null;
       }
 
-      edgeRefreshNeeded = true;
-    }
-
-    if (edgeRefreshNeeded) {
-      this.caveEdgeGraphics?.destroy();
-      this.drawCaveEdges();
+      this.refreshCaveEdgesNearTile(tx, ty);
     }
   }
 
@@ -1407,7 +1655,7 @@ export class GameplayScene extends Phaser.Scene {
       .setDepth(30)
       .setTint(color)
       .setScale(0.42)
-      .setAlpha(0.72)
+      .setAlpha(glowAlpha(0.72))
       .setBlendMode(Phaser.BlendModes.ADD);
 
     this.minimap?.ignore(flash);
@@ -1423,9 +1671,10 @@ export class GameplayScene extends Phaser.Scene {
 
   private spawnBurst(x: number, y: number, color: number, count: number, speed: number): void {
     const texture = color === 0xd4845a ? TEXTURES.particleAmber : color === 0xc47a8a ? TEXTURES.particleMagenta : color === 0x5ab8a8 ? TEXTURES.particleCyan : TEXTURES.particleWhite;
+    const particleCount = this.qualityParticleCount(count);
 
-    for (let index = 0; index < count; index += 1) {
-      const angle = (index / count) * Math.PI * 2 + Math.random() * 0.45;
+    for (let index = 0; index < particleCount; index += 1) {
+      const angle = (index / particleCount) * Math.PI * 2 + Math.random() * 0.45;
       const distance = speed * (0.25 + Math.random() * 0.75);
       const particle = this.add.image(x, y, texture).setDepth(30).setTint(color).setBlendMode(Phaser.BlendModes.ADD);
       particle.setScale(0.7 + Math.random() * 0.9);
@@ -1520,7 +1769,7 @@ export class GameplayScene extends Phaser.Scene {
       .setDepth(29)
       .setTint(color)
       .setScale(scale)
-      .setAlpha(0.64)
+      .setAlpha(glowAlpha(0.64))
       .setBlendMode(Phaser.BlendModes.ADD);
 
     this.minimap?.ignore(glow);
@@ -1537,9 +1786,9 @@ export class GameplayScene extends Phaser.Scene {
   private spawnPulseRing(x: number, y: number, color: number, duration: number): void {
     const ring = this.add.graphics()
       .setDepth(28)
-      .setAlpha(0.86)
+      .setAlpha(glowAlpha(0.86))
       .setBlendMode(Phaser.BlendModes.ADD);
-    ring.lineStyle(3, color, 0.92);
+    ring.lineStyle(3, color, glowAlpha(0.92));
     ring.strokeCircle(0, 0, 18);
     ring.setPosition(x, y);
     this.minimap?.ignore(ring);
@@ -1601,9 +1850,9 @@ export class GameplayScene extends Phaser.Scene {
   private spawnNearMissFeedback(x: number, y: number): void {
     const streak = this.add.graphics()
       .setDepth(31)
-      .setAlpha(0.9)
+      .setAlpha(glowAlpha(0.9))
       .setBlendMode(Phaser.BlendModes.ADD);
-    streak.lineStyle(4, 0xf0e4cc, 0.84);
+    streak.lineStyle(4, 0xf0e4cc, glowAlpha(0.84));
     streak.lineBetween(-18, 0, 18, 0);
     streak.setPosition(x, y);
     streak.setRotation(this.state.player.angle + Math.PI / 2);

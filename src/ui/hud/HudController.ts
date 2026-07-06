@@ -40,6 +40,15 @@ export class HudController {
   private handlers: HudHandlers | null = null;
   private runSummaryVisible = false;
   private lastTaskSignature = "";
+  private lastTaskRenderSignature = "";
+  private lastCargoSignature = "";
+  private lastBlastSignature = "";
+  private lastShieldSignature = "";
+  private lastAbilitySignature = "";
+  private lastMissionIntroSignature = "";
+  private lastPurchaseSignature = "";
+  private lastRewardSignature = "";
+  private readonly nodeCache = new Map<string, HTMLElement | null>();
   private activeServiceTab: "upgrades" | "unlocks" | "contract" = "upgrades";
   private lastSummaryProgress: UpgradeState | null = null;
   private pickupToastSerial = 0;
@@ -157,8 +166,10 @@ export class HudController {
     
     setText(this.root, "score", `${cargoValue}`);
 
-    // Update bottom center indicators
-    const shimNode = this.root.querySelector<HTMLElement>(".hud-indicators .shimmer");
+    const cargoSignature = `${state.inventory.shimmer}|${state.inventory.voltaic}|${state.inventory.aetherium}|${state.inventory.ferrite}`;
+    if (cargoSignature !== this.lastCargoSignature) {
+      this.lastCargoSignature = cargoSignature;
+      const shimNode = this.getNode(".hud-indicators .shimmer");
     if (shimNode) shimNode.textContent = `${state.inventory.shimmer} ✦`;
     const voltNode = this.root.querySelector<HTMLElement>(".hud-indicators .voltaic");
     if (voltNode) voltNode.textContent = `${state.inventory.voltaic} ❖`;
@@ -172,7 +183,9 @@ export class HudController {
     if (aethNode) aethNode.innerHTML = renderOreCount("aetherium", state.inventory.aetherium);
     if (ferrNode) ferrNode.innerHTML = renderOreCount("ferrite", state.inventory.ferrite);
 
-    const bossPanel = this.root.querySelector<HTMLElement>('[data-panel="boss"]');
+    }
+
+    const bossPanel = this.getNode('[data-panel="boss"]');
     if (bossPanel) {
       bossPanel.classList.toggle("is-hidden", !state.boss.active || state.boss.defeated);
     }
@@ -203,6 +216,13 @@ export class HudController {
   setPaused(paused: boolean): void {
     const panel = this.root.querySelector<HTMLElement>('[data-panel="pause"]');
     panel?.classList.toggle("is-hidden", !paused);
+  }
+
+  private getNode<T extends HTMLElement = HTMLElement>(selector: string): T | null {
+    if (!this.nodeCache.has(selector)) {
+      this.nodeCache.set(selector, this.root.querySelector<T>(selector));
+    }
+    return this.nodeCache.get(selector) as T | null;
   }
 
   showPickupToast(kind: "ore" | "power", id: OreId | PowerDropId): void {
@@ -434,14 +454,20 @@ export class HudController {
   }
 
   private renderBlastCharges(state: GameState): void {
-    const slot = this.root.querySelector<HTMLElement>('[data-slot="blast"]');
-    const pips = this.root.querySelector<HTMLElement>('[data-value="blast-pips"]');
-    const timer = this.root.querySelector<HTMLElement>('[data-value="blast-timer"]');
+    const unlocked = state.upgrades.purchasedUnlocks.includes("swarmBlast");
+    const signature = `${unlocked}|${state.player.blastCharges}|${Math.ceil(state.player.blastRechargeTimer)}|${state.player.blastRepeatCooldown > 0}`;
+    if (signature === this.lastBlastSignature) {
+      return;
+    }
+    this.lastBlastSignature = signature;
+
+    const slot = this.getNode('[data-slot="blast"]');
+    const pips = this.getNode('[data-value="blast-pips"]');
+    const timer = this.getNode('[data-value="blast-timer"]');
     if (!slot || !pips || !timer) {
       return;
     }
 
-    const unlocked = state.upgrades.purchasedUnlocks.includes("swarmBlast");
     slot.classList.toggle("is-hidden", !unlocked);
     slot.classList.toggle("is-locked", unlocked && state.player.blastCharges === 0);
     slot.classList.toggle("is-cooling", state.player.blastRepeatCooldown > 0);
@@ -453,13 +479,19 @@ export class HudController {
   }
 
   private renderShieldState(state: GameState): void {
-    const slot = this.root.querySelector<HTMLElement>('[data-slot="shield"]');
-    const stateNode = this.root.querySelector<HTMLElement>('[data-value="shield-state"]');
+    const unlocked = state.upgrades.purchasedUnlocks.includes("shieldEmitter");
+    const signature = `${unlocked}|${state.player.shieldActiveTimer > 0}|${Math.ceil(state.player.shieldCooldown)}|${Math.ceil(state.player.shield)}`;
+    if (signature === this.lastShieldSignature) {
+      return;
+    }
+    this.lastShieldSignature = signature;
+
+    const slot = this.getNode('[data-slot="shield"]');
+    const stateNode = this.getNode('[data-value="shield-state"]');
     if (!slot || !stateNode) {
       return;
     }
 
-    const unlocked = state.upgrades.purchasedUnlocks.includes("shieldEmitter");
     slot.classList.toggle("is-hidden", !unlocked);
     slot.classList.toggle("is-locked", !unlocked);
     slot.classList.toggle("is-cooling", unlocked && state.player.shieldCooldown > 0);
@@ -475,42 +507,53 @@ export class HudController {
   }
 
   private renderAbilitySlots(state: GameState): void {
-    const dash = this.root.querySelector<HTMLElement>('[data-slot="dash"]');
+    const signature = `${state.upgrades.purchasedUnlocks.includes("dashModule")}`;
+    if (signature === this.lastAbilitySignature) {
+      return;
+    }
+    this.lastAbilitySignature = signature;
+    const dash = this.getNode('[data-slot="dash"]');
     dash?.classList.toggle("is-hidden", !state.upgrades.purchasedUnlocks.includes("dashModule"));
   }
 
   private renderMissionIntro(state: GameState): void {
-    const panel = this.root.querySelector<HTMLElement>('[data-panel="mission-intro"]');
-    const territory = this.root.querySelector<HTMLElement>('[data-value="mission-territory"]');
-    const title = this.root.querySelector<HTMLElement>('[data-value="mission-title"]');
-    const loadout = this.root.querySelector<HTMLElement>('[data-value="mission-loadout"]');
-    const first = this.root.querySelector<HTMLElement>('[data-value="mission-first"]');
+    const panel = this.getNode('[data-panel="mission-intro"]');
+    const territory = this.getNode('[data-value="mission-territory"]');
+    const title = this.getNode('[data-value="mission-title"]');
+    const loadout = this.getNode('[data-value="mission-loadout"]');
+    const first = this.getNode('[data-value="mission-first"]');
     const task = getActiveTask(state.upgrades);
     if (!panel || !territory || !title || !loadout || !first || !task || !state.upgrades.activeTask) {
       panel?.classList.add("is-hidden");
+      this.lastMissionIntroSignature = "";
       return;
     }
 
-    territory.textContent = TERRITORY_CONFIG[task.territory].label.toUpperCase();
-    title.textContent = task.label.replace("Org Order: ", "");
-    loadout.innerHTML = task.requirements
-      .filter((requirement) => requirement.kind === "collect")
-      .map((requirement) => `<span class="mission-material">${oreIcon(requirement.ore)}<b>${requirement.amount}</b></span>`)
-      .join("");
     const guidance = getTaskGuidance(state.upgrades, task, {
       cargoValue: 0,
       threatMood: state.threat.mood,
       bossActive: state.boss.active,
       bossDefeated: state.boss.defeated
     });
-    first.textContent = guidance.nextAction;
-    panel.classList.toggle("is-hidden", state.mission.introTimer <= 0 || state.status !== "playing" || title.textContent.trim().length === 0);
+    const visible = state.mission.introTimer > 0 && state.status === "playing";
+    const signature = `${visible}|${task.id}|${guidance.nextAction}`;
+    if (signature !== this.lastMissionIntroSignature) {
+      this.lastMissionIntroSignature = signature;
+      territory.textContent = TERRITORY_CONFIG[task.territory].label.toUpperCase();
+      title.textContent = task.label.replace("Org Order: ", "");
+      loadout.innerHTML = task.requirements
+        .filter((requirement) => requirement.kind === "collect")
+        .map((requirement) => `<span class="mission-material">${oreIcon(requirement.ore)}<b>${requirement.amount}</b></span>`)
+        .join("");
+      first.textContent = guidance.nextAction;
+      panel.classList.toggle("is-hidden", !visible || title.textContent.trim().length === 0);
+    }
   }
 
   private renderPurchaseHint(progress: UpgradeState, serviceBayOpen: boolean): void {
-    const panel = this.root.querySelector<HTMLElement>('[data-panel="purchase-hint"]');
-    const title = this.root.querySelector<HTMLElement>('[data-value="purchase-title"]');
-    const action = this.root.querySelector<HTMLElement>('[data-value="purchase-action"]');
+    const panel = this.getNode('[data-panel="purchase-hint"]');
+    const title = this.getNode('[data-value="purchase-title"]');
+    const action = this.getNode('[data-value="purchase-action"]');
     if (!panel || !title || !action) {
       return;
     }
@@ -518,9 +561,15 @@ export class HudController {
     const suggestion = findPurchaseSuggestion(progress);
     if (!suggestion) {
       panel.classList.add("is-hidden");
+      this.lastPurchaseSignature = "";
       return;
     }
 
+    const signature = `${serviceBayOpen}|${suggestion.kind}|${suggestion.title}`;
+    if (signature === this.lastPurchaseSignature) {
+      return;
+    }
+    this.lastPurchaseSignature = signature;
     panel.classList.remove("is-hidden");
     panel.classList.toggle("is-service-open", serviceBayOpen);
     panel.classList.toggle("is-unlock", suggestion.kind === "unlock");
@@ -669,12 +718,12 @@ export class HudController {
   }
 
   private renderTaskHud(progress: UpgradeState, options: Parameters<typeof getTaskGuidance>[2]): void {
-    const panel = this.root.querySelector<HTMLElement>('[data-panel="task"]');
-    const name = this.root.querySelector<HTMLElement>('[data-value="task-name"]');
-    const next = this.root.querySelector<HTMLElement>('[data-value="task-next"]');
-    const meta = this.root.querySelector<HTMLElement>('[data-value="task-meta"]');
-    const progressLine = this.root.querySelector<HTMLElement>('[data-value="task-progress"]');
-    const steps = this.root.querySelector<HTMLElement>('[data-value="task-steps"]');
+    const panel = this.getNode('[data-panel="task"]');
+    const name = this.getNode('[data-value="task-name"]');
+    const next = this.getNode('[data-value="task-next"]');
+    const meta = this.getNode('[data-value="task-meta"]');
+    const progressLine = this.getNode('[data-value="task-progress"]');
+    const steps = this.getNode('[data-value="task-steps"]');
     const task = getActiveTask(progress);
 
     if (!panel || !name || !next || !meta || !progressLine || !steps || !task || !progress.activeTask) {
@@ -686,12 +735,16 @@ export class HudController {
     panel.classList.remove("is-hidden");
     panel.classList.toggle("is-ready", guidance.isCraftReady || guidance.isBankReady);
     panel.classList.toggle("is-danger", Boolean(guidance.bossCue && options?.threatMood !== "quiet"));
-    name.textContent = guidance.label;
-    next.textContent = guidance.nextAction;
-    progressLine.textContent = currentProgressLine(guidance);
-    meta.textContent = `${TERRITORY_CONFIG[task.territory].label} / ${task.mapVariant}`;
-    steps.innerHTML = renderObjectiveChips(guidance);
     const signature = guidance.stepStates.map((step) => `${step.label}:${step.current}/${step.target}:${step.complete}`).join("|");
+    const renderSignature = `${guidance.label}|${guidance.nextAction}|${currentProgressLine(guidance)}|${task.territory}|${task.mapVariant}|${signature}`;
+    if (renderSignature !== this.lastTaskRenderSignature) {
+      this.lastTaskRenderSignature = renderSignature;
+      name.textContent = guidance.label;
+      next.textContent = guidance.nextAction;
+      progressLine.textContent = currentProgressLine(guidance);
+      meta.textContent = `${TERRITORY_CONFIG[task.territory].label} / ${task.mapVariant}`;
+      steps.innerHTML = renderObjectiveChips(guidance);
+    }
     if (this.lastTaskSignature && signature !== this.lastTaskSignature) {
       panel.classList.remove("is-progress-pulse");
       void panel.offsetWidth;
@@ -701,9 +754,16 @@ export class HudController {
   }
 
   private renderRewardHud(state: GameState): void {
-    const streak = this.root.querySelector<HTMLElement>('[data-panel="streak"]');
+    const streak = this.getNode('[data-panel="streak"]');
     if (streak) {
       const active = state.player.miningStreak.ore && state.player.miningStreak.count >= 2 && state.player.miningStreak.timer > 0;
+      const signature = active && state.player.miningStreak.ore
+        ? `${state.player.miningStreak.ore}|${state.player.miningStreak.count}`
+        : "hidden";
+      if (signature === this.lastRewardSignature) {
+        return;
+      }
+      this.lastRewardSignature = signature;
       streak.classList.toggle("is-hidden", !active);
       if (active && state.player.miningStreak.ore) {
         const count = state.player.miningStreak.count;
@@ -718,13 +778,16 @@ export class HudController {
 function setWidth(root: HTMLElement, key: string, value: number): void {
   const node = root.querySelector<HTMLElement>(`[data-meter="${key}"]`);
   if (node) {
-    node.style.width = `${Math.max(0, Math.min(1, value)) * 100}%`;
+    const width = `${Math.max(0, Math.min(1, value)) * 100}%`;
+    if (node.style.width !== width) {
+      node.style.width = width;
+    }
   }
 }
 
 function setText(root: HTMLElement, key: string, value: string): void {
   const node = root.querySelector<HTMLElement>(`[data-value="${key}"]`);
-  if (node) {
+  if (node && node.textContent !== value) {
     node.textContent = value;
   }
 }

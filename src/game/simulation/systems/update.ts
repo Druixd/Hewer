@@ -36,6 +36,9 @@ const OBJECTIVE_TARGET_LIMIT = 80;
 const OBJECTIVE_WAVE_COOLDOWN = 8.5;
 const CHASE_PATH_MARGIN_TILES = 12;
 const CHASE_PATH_MAX_VISITS = 1500;
+const CHASE_PATH_FRAME_BUDGET = 6;
+const CHASE_PATH_CACHE_TIME = 0.28;
+const CHASE_PATH_REPATH_TILES = 3;
 const NEAR_MISS_DISTANCE = 10;
 const PLAYER_DAMAGE_KNOCKBACK = 118;
 const PLAYER_DAMAGE_KNOCKBACK_MAX_SPEED = 360;
@@ -53,8 +56,26 @@ interface PathTile {
 
 type EnemyDraft = Omit<EnemyState, "elite" | "eliteTier">;
 
+interface ChasePathCache {
+  goalTile: PathTile;
+  waypoint: Vec2;
+  expiresAt: number;
+}
+
+interface ObjectiveTargetCache {
+  ore: OreId | null;
+  tileX: number;
+  tileY: number;
+  targets: ObjectiveTargetState[];
+}
+
+const chasePathCache = new WeakMap<Vec2, ChasePathCache>();
+const objectiveTargetCache = new WeakMap<GameState, ObjectiveTargetCache>();
+let chasePathBudget = CHASE_PATH_FRAME_BUDGET;
+
 export function updateGame(state: GameState, actions: InputActions, dt: number): void {
   state.events = [];
+  chasePathBudget = CHASE_PATH_FRAME_BUDGET;
 
   if (state.status !== "playing") {
     state.beam.active = false;
@@ -554,7 +575,7 @@ function updateMissionState(state: GameState): void {
   const previousOre = state.mission.focusedOre;
   const focusedOre = getFocusedObjectiveOre(state);
   state.mission.focusedOre = focusedOre;
-  state.objectiveTargets = focusedOre ? findObjectiveTargets(state, focusedOre) : [];
+  state.objectiveTargets = focusedOre ? getCachedObjectiveTargets(state, focusedOre) : [];
 
   if (focusedOre !== previousOre) {
     addEvent(state, "objective-focused", state.player.x, state.player.y, focusedOre ? ORE_CONFIG[focusedOre].color : 0xe8c86a);
@@ -586,6 +607,24 @@ function updateMissionState(state: GameState): void {
     addEvent(state, "extract-ready", state.player.x, state.player.y, 0x5ab8a8);
   }
   state.mission.extractReady = extractReady;
+}
+
+function getCachedObjectiveTargets(state: GameState, ore: OreId): ObjectiveTargetState[] {
+  const playerTileX = Math.floor(state.player.x / TILE_SIZE);
+  const playerTileY = Math.floor(state.player.y / TILE_SIZE);
+  const cached = objectiveTargetCache.get(state);
+  if (cached && cached.ore === ore && cached.tileX === playerTileX && cached.tileY === playerTileY) {
+    return cached.targets;
+  }
+
+  const targets = findObjectiveTargets(state, ore);
+  objectiveTargetCache.set(state, {
+    ore,
+    tileX: playerTileX,
+    tileY: playerTileY,
+    targets
+  });
+  return targets;
 }
 
 function getFocusedObjectiveOre(state: GameState): OreId | null {
@@ -1028,6 +1067,7 @@ function damageTile(state: GameState, tile: TileState, amount: number): void {
   }
 
   setHitStop(state, hitStopForBlock(tile.type));
+  objectiveTargetCache.delete(state);
   addEvent(state, "tile-broken", centerX, centerY, config.glow);
 }
 
@@ -1402,11 +1442,30 @@ function getChaseDirection(state: GameState, from: Vec2, to: Vec2, radius: numbe
     return direct;
   }
 
+  const goalTile = worldToTile(to);
+  const cached = chasePathCache.get(from);
+  if (cached && cached.expiresAt > state.elapsed && tileDistance(cached.goalTile, goalTile) <= CHASE_PATH_REPATH_TILES) {
+    const cachedDirection = normalize({ x: cached.waypoint.x - from.x, y: cached.waypoint.y - from.y });
+    if (length(cachedDirection) > 0 && hasClearMovementLine(state, from, cached.waypoint, radius)) {
+      return cachedDirection;
+    }
+  }
+
+  if (chasePathBudget <= 0) {
+    return direct;
+  }
+  chasePathBudget -= 1;
+
   const pathTarget = findPathWaypoint(state, from, to, radius);
   if (!pathTarget) {
     return direct;
   }
 
+  chasePathCache.set(from, {
+    goalTile,
+    waypoint: pathTarget,
+    expiresAt: state.elapsed + CHASE_PATH_CACHE_TIME
+  });
   const pathDirection = normalize({ x: pathTarget.x - from.x, y: pathTarget.y - from.y });
   return length(pathDirection) === 0 ? direct : pathDirection;
 }
@@ -1583,6 +1642,10 @@ function keyToTile(key: string): PathTile {
 }
 
 function heuristic(a: PathTile, b: PathTile): number {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+}
+
+function tileDistance(a: PathTile, b: PathTile): number {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 

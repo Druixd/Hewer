@@ -4,6 +4,11 @@ import { TEXTURES } from "../../game/assets/manifest";
 import type { BlockId, EnemyId, OreId, ShipId, TerritoryId } from "../../game/simulation/types";
 
 const TILE_VARIANT_COUNT = 4;
+const ORE_GLOW_ALPHA_SCALE = 0.7;
+
+function oreGlowAlpha(alpha: number): number {
+  return Phaser.Math.Clamp(alpha * ORE_GLOW_ALPHA_SCALE, 0, 1);
+}
 
 export function createGeneratedTextures(scene: Phaser.Scene): void {
   createTileTextures(scene);
@@ -185,7 +190,7 @@ function drawBlockShell(graphics: Phaser.GameObjects.Graphics, palette: TilePale
   graphics.lineTo(7, 22);
   graphics.lineTo(2, 18);
   graphics.strokePath();
-  graphics.fillStyle(palette.glow, 0.055);
+  graphics.fillStyle(palette.glow, oreGlowAlpha(0.055));
   graphics.fillCircle(12, 12, 9);
   drawReliefFrame(graphics, palette, variant, 0.48);
 }
@@ -229,7 +234,7 @@ function drawCircuitMark(graphics: Phaser.GameObjects.Graphics, palette: TilePal
 
 function drawGoldOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant: number): void {
   const yShift = variant % 2 === 0 ? 0 : -3;
-  graphics.lineStyle(2, palette.glow, 0.9);
+  graphics.lineStyle(2, palette.glow, oreGlowAlpha(0.9));
   graphics.beginPath();
   graphics.moveTo(3, 15 + yShift);
   graphics.lineTo(8, 12 + variant);
@@ -237,10 +242,10 @@ function drawGoldOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette
   graphics.lineTo(17, 8 + yShift);
   graphics.lineTo(22, 10 + variant);
   graphics.strokePath();
-  graphics.fillStyle(palette.glow, 0.68);
+  graphics.fillStyle(palette.glow, oreGlowAlpha(0.68));
   graphics.fillTriangle(7 + variant, 9 + yShift, 13, 12 + variant, 9, 18);
   graphics.fillTriangle(15, 6 + variant, 21 - variant, 9, 17, 14 + yShift);
-  graphics.fillStyle(palette.hot, 0.84);
+  graphics.fillStyle(palette.hot, oreGlowAlpha(0.84));
   graphics.fillRect(10, 13, 2, 2);
   graphics.fillRect(18, 9, 2, 2);
   graphics.lineStyle(1, 0xffffff, 0.24);
@@ -249,21 +254,21 @@ function drawGoldOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette
 
 function drawCrystalOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant: number): void {
   const skew = variant - 1;
-  graphics.lineStyle(1, palette.glow, 0.84);
+  graphics.lineStyle(1, palette.glow, oreGlowAlpha(0.84));
   graphics.lineBetween(4 + skew, 3 + variant, 20 - variant, 12);
   graphics.lineBetween(20 - variant, 12, 12 + skew, 22 - (variant % 2));
   graphics.lineBetween(12 + skew, 22 - (variant % 2), 4 + skew, 3 + variant);
   graphics.lineBetween(8 + variant, 6, 12 + skew, 22);
-  graphics.fillStyle(palette.glow, 0.46);
+  graphics.fillStyle(palette.glow, oreGlowAlpha(0.46));
   graphics.fillTriangle(10 + skew, 7 + variant, 17 - variant, 12, 12, 18);
-  graphics.fillStyle(palette.hot, 0.72);
+  graphics.fillStyle(palette.hot, oreGlowAlpha(0.72));
   graphics.fillCircle(13, 12, 1.4);
   graphics.lineStyle(1, 0xffffff, 0.28);
   graphics.lineBetween(8 + variant, 6, 13, 11 + (variant % 2));
 }
 
 function drawVoltaicOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant: number): void {
-  graphics.lineStyle(1.5, palette.glow, 0.9);
+  graphics.lineStyle(1.5, palette.glow, oreGlowAlpha(0.9));
   graphics.beginPath();
   graphics.moveTo(2, 10 + variant);
   graphics.lineTo(7 + variant, 12);
@@ -276,7 +281,7 @@ function drawVoltaicOre(graphics: Phaser.GameObjects.Graphics, palette: TilePale
   graphics.moveTo(13, 8);
   graphics.lineTo(18 - (variant % 2), 18);
   graphics.strokePath();
-  graphics.fillStyle(palette.hot, 0.7);
+  graphics.fillStyle(palette.hot, oreGlowAlpha(0.7));
   graphics.fillCircle(12, 10, 1.8);
   graphics.fillCircle(18, 18, 1.2);
   graphics.lineStyle(1, 0xffffff, 0.22);
@@ -284,22 +289,22 @@ function drawVoltaicOre(graphics: Phaser.GameObjects.Graphics, palette: TilePale
 }
 
 function drawAetheriumOre(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant: number): void {
-  graphics.lineStyle(1.2, palette.glow, 0.84);
+  graphics.lineStyle(1.2, palette.glow, oreGlowAlpha(0.84));
   graphics.strokeCircle(12, 12, 5.5 + (variant % 2));
   graphics.strokeCircle(7 + variant, 8, 2.3);
   graphics.strokeCircle(17 - (variant % 2), 16 - variant, 3.2);
-  graphics.fillStyle(palette.glow, 0.46);
+  graphics.fillStyle(palette.glow, oreGlowAlpha(0.46));
   graphics.fillCircle(12, 12, 2.8 + (variant % 2) * 0.4);
   graphics.fillCircle(7 + variant, 8, 1.4);
   graphics.fillCircle(17 - (variant % 2), 16 - variant, 1.8);
-  graphics.fillStyle(palette.hot, 0.68);
+  graphics.fillStyle(palette.hot, oreGlowAlpha(0.68));
   graphics.fillCircle(13, 11, 1);
   graphics.lineStyle(1, 0xffffff, 0.2);
   graphics.lineBetween(9 + variant, 8, 13, 11);
 }
 
 function drawCornerNoise(graphics: Phaser.GameObjects.Graphics, palette: TilePalette, variant: number): void {
-  graphics.fillStyle(palette.glow, 0.32);
+  graphics.fillStyle(palette.glow, oreGlowAlpha(0.32));
   graphics.fillRect(4 + variant, 4, 1, 1);
   graphics.fillRect(19 - variant, 5 + (variant % 2), 1, 1);
   graphics.fillRect(5, 19 - variant, 1, 1);
@@ -339,9 +344,9 @@ function createPickupTextures(scene: Phaser.Scene): void {
     const graphics = scene.make.graphics({ x: 0, y: 0 }, false);
     
     // Draw bubble pickup
-    graphics.fillStyle(color, 0.35);
+    graphics.fillStyle(color, oreGlowAlpha(0.35));
     graphics.fillCircle(10, 10, 9);
-    graphics.lineStyle(1.5, color, 1.0);
+    graphics.lineStyle(1.5, color, oreGlowAlpha(1.0));
     graphics.strokeCircle(10, 10, 7.5);
     graphics.fillStyle(0xffffff, 0.9);
     graphics.fillCircle(8, 8, 2); // shine
