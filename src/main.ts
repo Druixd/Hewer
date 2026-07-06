@@ -37,6 +37,9 @@ const game = new Phaser.Game({
   },
   render: {
     antialias: false,
+    antialiasGL: false,
+    powerPreference: "high-performance",
+    batchSize: 8192,
     pixelArt: true,
     roundPixels: true
   },

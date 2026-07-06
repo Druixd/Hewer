@@ -30,12 +30,41 @@ const MINIMAP_RADIUS = MINIMAP_SIZE / MINIMAP_ZOOM / 2;
 const MINIMAP_TILE_RANGE = Math.ceil(MINIMAP_RADIUS / TILE_SIZE) + 2;
 const TILE_VARIANT_COUNT = 4;
 const PLAYER_SHIP_VISUAL_SCALE = 0.84;
-const LOCAL_VISIBILITY_RADIUS = 900;
 const MINIMAP_INTERVAL_MS = 125;
 const MINIMAP_LOW_QUALITY_INTERVAL_MS = 220;
 const OBJECTIVE_DRAW_INTERVAL_MS = 140;
 const CAVE_EDGE_CHUNK_SIZE = 24;
-let glowAlphaScale = 0.7;
+const VISIBILITY_UPDATE_INTERVAL_MS = 70;
+const VISIBILITY_LOW_QUALITY_UPDATE_INTERVAL_MS = 115;
+const TERRAIN_CULL_MARGIN = 96;
+const TERRAIN_CHUNK_SIZE = 16;
+const TERRAIN_TILE_OVERLAP = 1;
+const FIXED_QUALITY_LEVEL: 1 = 1;
+const ORE_GLOW_POOL_SIZE = 72;
+let glowAlphaScale = 0.58;
+
+type FrameProfileKey = "sim" | "tiles" | "actors" | "transient" | "minimap" | "presentation" | "events" | "hud";
+type FrameProfile = Record<FrameProfileKey, number>;
+
+interface TerrainChunk {
+  chunkX: number;
+  chunkY: number;
+  startTileX: number;
+  startTileY: number;
+  endTileX: number;
+  endTileY: number;
+  view: Phaser.GameObjects.RenderTexture;
+}
+
+interface OreGlowCandidate {
+  x: number;
+  y: number;
+  color: number;
+  alpha: number;
+  scale: number;
+  distanceSq: number;
+  priority: number;
+}
 
 function glowAlpha(alpha: number): number {
   return Phaser.Math.Clamp(alpha * glowAlphaScale, 0, 1);
@@ -55,8 +84,9 @@ export class GameplayScene extends Phaser.Scene {
   private caveEdgeGraphics!: Phaser.GameObjects.Graphics;
   private caveEdgeChunks = new Map<string, Phaser.GameObjects.Graphics>();
   private caveEdgeAlpha = 0.78;
-  private tileSprites: Array<Phaser.GameObjects.Image | null> = [];
-  private tileGlows: Array<Phaser.GameObjects.Image[] | null> = [];
+  private terrainChunks: TerrainChunk[] = [];
+  private oreGlowPool: Phaser.GameObjects.Image[] = [];
+  private oreGlowCandidates: OreGlowCandidate[] = [];
   private enemySprites = new Map<string, Phaser.GameObjects.Image>();
   private enemyGlowSprites = new Map<string, Phaser.GameObjects.Image>();
   private enemyEliteRings = new Map<string, Phaser.GameObjects.Arc>();
@@ -72,9 +102,10 @@ export class GameplayScene extends Phaser.Scene {
   private lastTrailTime = 0;
   private minimap!: Phaser.Cameras.Scene2D.Camera;
   private minimapGraphics!: Phaser.GameObjects.Graphics;
-  private activeTileVisibility = new Set<number>();
+  private visibleCaveEdgeChunkKeys = new Set<string>();
   private lastVisibilityCenterTileX = Number.NaN;
   private lastVisibilityCenterTileY = Number.NaN;
+  private lastVisibilityDrawAt = 0;
   private lastMinimapTileX = Number.NaN;
   private lastMinimapTileY = Number.NaN;
   private lastMinimapDrawAt = 0;
@@ -88,7 +119,12 @@ export class GameplayScene extends Phaser.Scene {
   private frameMsLastValue = 0;
   private lowFpsSamples = 0;
   private highFpsSamples = 0;
-  private qualityLevel: 0 | 1 | 2 = 0;
+  private qualityLevel: 0 | 1 | 2 = FIXED_QUALITY_LEVEL;
+  private renderStressLevel: 0 | 1 | 2 = 0;
+  private frameProfile: FrameProfile = this.createEmptyFrameProfile();
+  private profileAccumulator: FrameProfile = this.createEmptyFrameProfile();
+  private profileSampleCount = 0;
+  private profileSummary = "";
 
   private backdropRect!: Phaser.GameObjects.Rectangle;
   private starsGraphics!: Phaser.GameObjects.Graphics;
@@ -129,6 +165,7 @@ export class GameplayScene extends Phaser.Scene {
     this.storeShuttle = null;
     this.lastVisibilityCenterTileX = Number.NaN;
     this.lastVisibilityCenterTileY = Number.NaN;
+    this.lastVisibilityDrawAt = 0;
     this.lastMinimapTileX = Number.NaN;
     this.lastMinimapTileY = Number.NaN;
     this.lastMinimapDrawAt = 0;
@@ -141,8 +178,9 @@ export class GameplayScene extends Phaser.Scene {
     this.frameMsLastValue = 0;
     this.lowFpsSamples = 0;
     this.highFpsSamples = 0;
-    this.qualityLevel = 0;
-    glowAlphaScale = 0.7;
+    this.qualityLevel = FIXED_QUALITY_LEVEL;
+    this.renderStressLevel = 0;
+    this.applyAdaptiveQuality();
 
     this.input.mouse?.disableContextMenu();
     this.keys = this.input.keyboard!.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,SHIFT,ESC,E,F3") as KeyMap;
@@ -156,9 +194,12 @@ export class GameplayScene extends Phaser.Scene {
   }
 
   private resetViewCaches(): void {
-    this.tileSprites = [];
-    this.tileGlows = [];
-    this.activeTileVisibility.clear();
+    this.terrainChunks.forEach((chunk) => chunk.view.destroy());
+    this.terrainChunks = [];
+    this.oreGlowPool.forEach((glow) => glow.destroy());
+    this.oreGlowPool = [];
+    this.oreGlowCandidates = [];
+    this.visibleCaveEdgeChunkKeys.clear();
     this.caveEdgeChunks.forEach((chunk) => chunk.destroy());
     this.caveEdgeChunks.clear();
     this.enemySprites.clear();
@@ -181,6 +222,7 @@ export class GameplayScene extends Phaser.Scene {
   update(_time: number, deltaMs: number): void {
     const hud = getHudController();
     this.updatePerformanceMonitor(deltaMs);
+    this.frameProfile = this.createEmptyFrameProfile();
     if (Phaser.Input.Keyboard.JustDown(this.keys.F3)) {
       this.toggleFpsOverlay();
     }
@@ -197,19 +239,61 @@ export class GameplayScene extends Phaser.Scene {
     const dt = Math.min(deltaMs / 1000, 0.034);
     this.syncScreenSpaceLayout();
     const actions = this.collectActions();
-    updateGame(this.state, actions, dt);
+    this.profile("sim", () => updateGame(this.state, actions, dt));
 
-    this.syncTilesFromEvents(this.state.events);
-    this.syncActors();
-    this.drawTransientWorld();
-    this.maybeDrawMinimap();
-    this.updateMoodPresentation();
+    this.profile("tiles", () => this.syncTilesFromEvents(this.state.events));
+    this.profile("actors", () => this.syncActors());
+    this.profile("transient", () => this.drawTransientWorld());
+    this.profile("minimap", () => this.maybeDrawMinimap());
+    this.profile("presentation", () => this.updateMoodPresentation());
     this.audioFeedback.updateMood(this.state.threat.mood);
     this.audioFeedback.updateHull(this.state.player.hull / this.state.player.maxHull);
-    this.handleEvents(this.state.events);
-    hud.update(this.state, this.progress);
+    this.profile("events", () => this.handleEvents(this.state.events));
+    this.profile("hud", () => hud.update(this.state, this.progress));
+    this.updateProfileSummary();
 
     this.maybeShowRunResult(hud);
+  }
+
+  private createEmptyFrameProfile(): FrameProfile {
+    return {
+      sim: 0,
+      tiles: 0,
+      actors: 0,
+      transient: 0,
+      minimap: 0,
+      presentation: 0,
+      events: 0,
+      hud: 0
+    };
+  }
+
+  private profile(key: FrameProfileKey, work: () => void): void {
+    const start = performance.now();
+    work();
+    this.frameProfile[key] += performance.now() - start;
+  }
+
+  private updateProfileSummary(): void {
+    this.profileSampleCount += 1;
+    for (const key of Object.keys(this.frameProfile) as FrameProfileKey[]) {
+      this.profileAccumulator[key] += this.frameProfile[key];
+    }
+
+    if (this.profileSampleCount < 45) {
+      return;
+    }
+
+    const averages = (Object.keys(this.profileAccumulator) as FrameProfileKey[])
+      .map((key) => ({
+        key,
+        value: this.profileAccumulator[key] / this.profileSampleCount
+      }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 2);
+    this.profileSummary = averages.map((entry) => `${entry.key[0]}${entry.value.toFixed(1)}`).join(" ");
+    this.profileAccumulator = this.createEmptyFrameProfile();
+    this.profileSampleCount = 0;
   }
 
   private updatePerformanceMonitor(deltaMs: number): void {
@@ -225,10 +309,10 @@ export class GameplayScene extends Phaser.Scene {
     this.fpsFrameCount = 0;
     this.fpsSampleMs = 0;
 
-    if (fps < 42) {
+    if (this.frameMsLastValue > 27) {
       this.lowFpsSamples += 1;
       this.highFpsSamples = 0;
-    } else if (fps > 54) {
+    } else if (this.frameMsLastValue < 18.5) {
       this.highFpsSamples += 1;
       this.lowFpsSamples = 0;
     } else {
@@ -236,21 +320,19 @@ export class GameplayScene extends Phaser.Scene {
       this.highFpsSamples = 0;
     }
 
-    if (this.lowFpsSamples >= 3 && this.qualityLevel < 2) {
-      this.qualityLevel = this.qualityLevel === 0 ? 1 : 2;
+    if (this.lowFpsSamples >= 2 && this.renderStressLevel < 2) {
+      this.renderStressLevel = this.renderStressLevel === 0 ? 1 : 2;
       this.lowFpsSamples = 0;
-      this.applyAdaptiveQuality();
-    } else if (this.highFpsSamples >= 6 && this.qualityLevel > 0) {
-      this.qualityLevel = this.qualityLevel === 2 ? 1 : 0;
+    } else if (this.highFpsSamples >= 5 && this.renderStressLevel > 0) {
+      this.renderStressLevel = this.renderStressLevel === 2 ? 1 : 0;
       this.highFpsSamples = 0;
-      this.applyAdaptiveQuality();
     }
 
     this.updateFpsOverlayText();
   }
 
   private applyAdaptiveQuality(): void {
-    glowAlphaScale = this.qualityLevel === 2 ? 0.48 : this.qualityLevel === 1 ? 0.58 : 0.7;
+    glowAlphaScale = 0.58;
   }
 
   private toggleFpsOverlay(): void {
@@ -265,13 +347,14 @@ export class GameplayScene extends Phaser.Scene {
     }
 
     const quality = this.qualityLevel === 0 ? "Q0" : this.qualityLevel === 1 ? "Q1" : "Q2";
-    this.fpsOverlay.textContent = `${Math.round(this.fpsLastValue)} FPS / ${this.frameMsLastValue.toFixed(1)} MS / ${quality}`;
+    const profile = this.profileSummary ? ` / ${this.profileSummary}` : "";
+    this.fpsOverlay.textContent = `${Math.round(this.fpsLastValue)} FPS / ${this.frameMsLastValue.toFixed(1)} MS / ${quality}${profile}`;
   }
 
   private maybeDrawMinimap(): void {
     const playerTileX = Math.floor(this.state.player.x / TILE_SIZE);
     const playerTileY = Math.floor(this.state.player.y / TILE_SIZE);
-    const interval = this.qualityLevel > 0 ? MINIMAP_LOW_QUALITY_INTERVAL_MS : MINIMAP_INTERVAL_MS;
+    const interval = this.renderStressLevel > 0 ? MINIMAP_LOW_QUALITY_INTERVAL_MS + this.renderStressLevel * 120 : MINIMAP_INTERVAL_MS;
     const tileChanged = playerTileX !== this.lastMinimapTileX || playerTileY !== this.lastMinimapTileY;
     if (!tileChanged && this.time.now - this.lastMinimapDrawAt < interval) {
       return;
@@ -284,17 +367,17 @@ export class GameplayScene extends Phaser.Scene {
   }
 
   private qualityParticleCount(count: number): number {
-    if (this.qualityLevel === 2) {
+    if (this.renderStressLevel === 2) {
       return Math.max(1, Math.ceil(count * 0.45));
     }
-    if (this.qualityLevel === 1) {
+    if (this.renderStressLevel === 1 || this.qualityLevel === 1) {
       return Math.max(1, Math.ceil(count * 0.68));
     }
     return count;
   }
 
   private trailIntervalMs(): number {
-    return this.qualityLevel === 2 ? 68 : this.qualityLevel === 1 ? 42 : 24;
+    return this.renderStressLevel === 2 ? 90 : this.renderStressLevel === 1 ? 64 : 42;
   }
 
   private maybeShowRunResult(hud = getHudController()): void {
@@ -424,51 +507,90 @@ export class GameplayScene extends Phaser.Scene {
     this.fitScreenOverlay(this.backdropRect, Math.max(this.scale.width, window.innerWidth), Math.max(this.scale.height, window.innerHeight));
     this.drawParallaxSpaceCave(bounds);
     this.drawCavernAtmosphere();
-
-    this.tileGlows = new Array(this.state.world.tiles.length).fill(null);
-    this.tileSprites = this.state.world.tiles.map((tile, index) => {
-      if (!isSolid(tile)) {
-        return null;
-      }
-
-      const x = tile.x * TILE_SIZE + TILE_SIZE / 2;
-      const y = tile.y * TILE_SIZE + TILE_SIZE / 2;
-
-      const glowColor = oreGlowForTile(tile.type);
-
-      if (glowColor !== null) {
-        const bgGlow = this.add.image(x, y, "fx.glow.radial")
-          .setDepth(0)
-          .setOrigin(0.5)
-          .setScale(1.35)
-          .setAlpha(glowAlpha(0.13))
-          .setVisible(false)
-          .setTint(glowColor)
-          .setBlendMode(Phaser.BlendModes.ADD);
-        
-        const coreGlow = this.add.image(x, y, "fx.glow.radial")
-          .setDepth(3)
-          .setOrigin(0.5)
-          .setScale(0.58)
-          .setAlpha(glowAlpha(0.28))
-          .setVisible(false)
-          .setTint(glowColor)
-          .setBlendMode(Phaser.BlendModes.ADD);
-
-        this.tileGlows[index] = [bgGlow, coreGlow];
-      }
-
-      const texture = TEXTURES.tile(tile.type, this.state.world.territory, tile.cracked, tileVisualVariant(this.state.world.seed, tile.x, tile.y, tile.type, tile.cracked));
-      const sprite = this.add.image(x, y, texture).setDepth(2);
-
-      // Start dim; the local visibility pass restores nearby tiles each frame.
-      sprite.setAlpha(0.02);
-      sprite.setScale(tile.type === "basalt" || tile.type === "ancient" ? 1.045 : 1.02);
-      sprite.setBlendMode(Phaser.BlendModes.NORMAL);
-      return sprite;
-    });
-
+    this.createTerrainChunks();
+    this.createOreGlowPool();
     this.drawCaveEdges();
+  }
+
+  private createTerrainChunks(): void {
+    this.terrainChunks = [];
+    const chunkColumns = Math.ceil(this.state.world.width / TERRAIN_CHUNK_SIZE);
+    const chunkRows = Math.ceil(this.state.world.height / TERRAIN_CHUNK_SIZE);
+
+    for (let chunkY = 0; chunkY < chunkRows; chunkY += 1) {
+      for (let chunkX = 0; chunkX < chunkColumns; chunkX += 1) {
+        const startTileX = chunkX * TERRAIN_CHUNK_SIZE;
+        const startTileY = chunkY * TERRAIN_CHUNK_SIZE;
+        const endTileX = Math.min(this.state.world.width, startTileX + TERRAIN_CHUNK_SIZE);
+        const endTileY = Math.min(this.state.world.height, startTileY + TERRAIN_CHUNK_SIZE);
+        const width = (endTileX - startTileX) * TILE_SIZE;
+        const height = (endTileY - startTileY) * TILE_SIZE;
+        const view = this.add.renderTexture(startTileX * TILE_SIZE, startTileY * TILE_SIZE, width, height)
+          .setDepth(2)
+          .setOrigin(0, 0)
+          .setVisible(false)
+          .setAlpha(0);
+
+        const chunk = {
+          chunkX,
+          chunkY,
+          startTileX,
+          startTileY,
+          endTileX,
+          endTileY,
+          view
+        };
+        this.terrainChunks.push(chunk);
+        this.redrawTerrainChunk(chunk);
+      }
+    }
+  }
+
+  private redrawTerrainChunk(chunk: TerrainChunk): void {
+    chunk.view.clear();
+    for (let tileY = chunk.startTileY; tileY < chunk.endTileY; tileY += 1) {
+      for (let tileX = chunk.startTileX; tileX < chunk.endTileX; tileX += 1) {
+        const tile = this.state.world.tiles[tileY * this.state.world.width + tileX];
+        if (!isSolid(tile)) {
+          continue;
+        }
+        const texture = TEXTURES.tile(tile.type, this.state.world.territory, tile.cracked, tileVisualVariant(this.state.world.seed, tile.x, tile.y, tile.type, tile.cracked));
+        const scale = tile.type === "basalt" || tile.type === "ancient" ? 1 + TERRAIN_TILE_OVERLAP / TILE_SIZE : 1;
+        chunk.view.stamp(
+          texture,
+          undefined,
+          (tileX - chunk.startTileX) * TILE_SIZE + TILE_SIZE / 2,
+          (tileY - chunk.startTileY) * TILE_SIZE + TILE_SIZE / 2,
+          {
+            alpha: 1,
+            originX: 0.5,
+            originY: 0.5,
+            scale,
+            tint: 0xffffff
+          }
+        );
+      }
+    }
+  }
+
+  private terrainChunkAt(tileX: number, tileY: number): TerrainChunk | undefined {
+    const chunkX = Math.floor(tileX / TERRAIN_CHUNK_SIZE);
+    const chunkY = Math.floor(tileY / TERRAIN_CHUNK_SIZE);
+    return this.terrainChunks.find((chunk) => chunk.chunkX === chunkX && chunk.chunkY === chunkY);
+  }
+
+  private createOreGlowPool(): void {
+    this.oreGlowPool = [];
+    for (let index = 0; index < ORE_GLOW_POOL_SIZE; index += 1) {
+      const glow = this.add.image(0, 0, "fx.glow.radial")
+        .setDepth(3)
+        .setOrigin(0.5)
+        .setScale(0.92)
+        .setAlpha(0)
+        .setVisible(false)
+        .setBlendMode(Phaser.BlendModes.ADD);
+      this.oreGlowPool.push(glow);
+    }
   }
 
   private drawParallaxSpaceCave(bounds: { width: number; height: number }): void {
@@ -558,7 +680,7 @@ export class GameplayScene extends Phaser.Scene {
     const key = `${chunkX},${chunkY}`;
     let graphics = this.caveEdgeChunks.get(key);
     if (!graphics) {
-      graphics = this.add.graphics().setDepth(4).setAlpha(this.caveEdgeAlpha);
+      graphics = this.add.graphics().setDepth(4).setAlpha(this.caveEdgeAlpha).setVisible(false);
       this.caveEdgeChunks.set(key, graphics);
       this.minimap?.ignore(graphics);
     }
@@ -614,7 +736,7 @@ export class GameplayScene extends Phaser.Scene {
     this.beamGraphics = this.add.graphics().setDepth(8);
     this.fieldGraphics = this.add.graphics().setDepth(4);
     this.hazardGraphics = this.add.graphics().setDepth(9);
-    this.objectiveGraphics = this.add.graphics().setDepth(7);
+    this.objectiveGraphics = this.add.graphics().setDepth(7).setBlendMode(Phaser.BlendModes.ADD);
     this.moodOverlay = this.add.rectangle(0, 0, 1, 1, 0x000000, 0)
       .setDepth(6)
       .setOrigin(0.5)
@@ -695,17 +817,10 @@ export class GameplayScene extends Phaser.Scene {
     if (this.visibilityVignette) this.minimap.ignore(this.visibilityVignette);
     if (this.extractionGlow) this.minimap.ignore(this.extractionGlow);
     if (this.playerLight) this.minimap.ignore(this.playerLight);
+    this.oreGlowPool.forEach((glow) => this.minimap.ignore(glow));
     if (this.reticle) this.minimap.ignore(this.reticle);
     if (this.ship) this.minimap.ignore(this.ship);
-    this.tileSprites.forEach((sprite) => {
-      if (sprite) {
-        this.minimap.ignore(sprite);
-      }
-    });
-    this.tileGlows.forEach((glows) => {
-      glows?.forEach((glow) => this.minimap.ignore(glow));
-    });
-
+    this.terrainChunks.forEach((chunk) => this.minimap.ignore(chunk.view));
     this.children.each((child) => {
       if (child instanceof Phaser.GameObjects.Image && child.texture?.key === "fx.glow.radial") {
         this.minimap.ignore(child);
@@ -960,10 +1075,26 @@ export class GameplayScene extends Phaser.Scene {
     const outer = 760;
     const centerTileX = Math.floor(player.x / TILE_SIZE);
     const centerTileY = Math.floor(player.y / TILE_SIZE);
-    const zoom = this.cameras.main.zoom || 1;
-    const viewRadius = Math.max(LOCAL_VISIBILITY_RADIUS, Math.hypot(this.scale.width, this.scale.height) / (2 * zoom) + 180);
-    const tileRange = Math.ceil(viewRadius / TILE_SIZE) + 2;
-    const nextActive = new Set<number>();
+    const interval = this.renderStressLevel > 0
+      ? VISIBILITY_LOW_QUALITY_UPDATE_INTERVAL_MS + this.renderStressLevel * 45
+      : VISIBILITY_UPDATE_INTERVAL_MS;
+    const tileChanged = centerTileX !== this.lastVisibilityCenterTileX || centerTileY !== this.lastVisibilityCenterTileY;
+    if (!tileChanged && this.time.now - this.lastVisibilityDrawAt < interval) {
+      this.updateDynamicObjectVisibility();
+      return;
+    }
+
+    this.lastVisibilityDrawAt = this.time.now;
+    const worldView = this.cameras.main.worldView;
+    const minTileX = Math.max(0, Math.floor((worldView.x - TERRAIN_CULL_MARGIN) / TILE_SIZE));
+    const maxTileX = Math.min(this.state.world.width - 1, Math.ceil((worldView.right + TERRAIN_CULL_MARGIN) / TILE_SIZE));
+    const minTileY = Math.max(0, Math.floor((worldView.y - TERRAIN_CULL_MARGIN) / TILE_SIZE));
+    const maxTileY = Math.min(this.state.world.height - 1, Math.ceil((worldView.bottom + TERRAIN_CULL_MARGIN) / TILE_SIZE));
+    const visibleChunkKeys = this.visibleCaveEdgeChunkKeys;
+    visibleChunkKeys.clear();
+    const glowCandidates = this.oreGlowCandidates;
+    glowCandidates.length = 0;
+    const focusedOre = this.state.mission.focusedOre;
 
     const alphaFor = (x: number, y: number, minAlpha: number, maxAlpha: number) => {
       const dist = Math.hypot(x - player.x, y - player.y);
@@ -971,54 +1102,99 @@ export class GameplayScene extends Phaser.Scene {
       return Phaser.Math.Linear(maxAlpha, minAlpha, t);
     };
 
-    for (let y = centerTileY - tileRange; y <= centerTileY + tileRange; y += 1) {
-      if (y < 0 || y >= this.state.world.height) {
-        continue;
-      }
-      for (let x = centerTileX - tileRange; x <= centerTileX + tileRange; x += 1) {
-        if (x < 0 || x >= this.state.world.width) {
-          continue;
-        }
-        const dx = x - centerTileX;
-        const dy = y - centerTileY;
-        if (dx * dx + dy * dy > tileRange * tileRange) {
-          continue;
-        }
-        const index = y * this.state.world.width + x;
-        const sprite = this.tileSprites[index];
-        if (!sprite?.visible) {
-          continue;
-        }
-        nextActive.add(index);
-        const tile = this.state.world.tiles[index];
-        const maxAlpha = tile.type === "ancient" ? 0.88 : tile.type === "basalt" ? 0.92 : 1;
-        sprite.setAlpha(alphaFor(sprite.x, sprite.y, tile.type === "basalt" || tile.type === "ancient" ? 0.035 : 0.09, maxAlpha));
-        const glows = this.tileGlows[index];
-        glows?.forEach((glow) => {
-          glow.setVisible(true);
-          glow.setAlpha(glowAlpha(alphaFor(glow.x, glow.y, 0.01, tile.type === "basalt" ? 0.08 : 0.28)));
-        });
+    for (const chunk of this.terrainChunks) {
+      const chunkLeft = chunk.startTileX * TILE_SIZE;
+      const chunkTop = chunk.startTileY * TILE_SIZE;
+      const chunkRight = chunk.endTileX * TILE_SIZE;
+      const chunkBottom = chunk.endTileY * TILE_SIZE;
+      const visible = chunkRight >= worldView.x - TERRAIN_CULL_MARGIN
+        && chunkLeft <= worldView.right + TERRAIN_CULL_MARGIN
+        && chunkBottom >= worldView.y - TERRAIN_CULL_MARGIN
+        && chunkTop <= worldView.bottom + TERRAIN_CULL_MARGIN;
+      chunk.view.setVisible(visible);
+      if (visible) {
+        chunk.view.setAlpha(1);
       }
     }
 
-    for (const index of this.activeTileVisibility) {
-      if (nextActive.has(index)) {
-        continue;
+    for (let y = minTileY; y <= maxTileY; y += 1) {
+      for (let x = minTileX; x <= maxTileX; x += 1) {
+        const index = y * this.state.world.width + x;
+        const tile = this.state.world.tiles[index];
+        if (!isSolid(tile)) {
+          continue;
+        }
+        visibleChunkKeys.add(`${Math.floor(x / CAVE_EDGE_CHUNK_SIZE)},${Math.floor(y / CAVE_EDGE_CHUNK_SIZE)}`);
+
+        const glowColor = oreGlowForTile(tile.type);
+        if (glowColor !== null) {
+          const tileCenterX = tile.x * TILE_SIZE + TILE_SIZE / 2;
+          const tileCenterY = tile.y * TILE_SIZE + TILE_SIZE / 2;
+          const dx = tileCenterX - player.x;
+          const dy = tileCenterY - player.y;
+          const distanceSq = dx * dx + dy * dy;
+          const distanceAlpha = alphaFor(tileCenterX, tileCenterY, 0, tile.type === focusedOre ? 0.30 : 0.22);
+          if (distanceAlpha > 0.035) {
+            glowCandidates.push({
+              x: tileCenterX,
+              y: tileCenterY,
+              color: glowColor,
+              alpha: distanceAlpha,
+              scale: tile.type === "aetherium" ? 0.95 : tile.type === focusedOre ? 0.82 : 0.68,
+              distanceSq,
+              priority: tile.type === focusedOre ? 1 : 0
+            });
+          }
+        }
       }
-      const sprite = this.tileSprites[index];
-      sprite?.setAlpha(0.02);
-      this.tileGlows[index]?.forEach((glow) => glow.setVisible(false));
     }
-    this.activeTileVisibility = nextActive;
+
+    glowCandidates.sort((a, b) => b.priority - a.priority || a.distanceSq - b.distanceSq);
+    const visibleGlowCount = Math.min(this.oreGlowPool.length, glowCandidates.length);
+    for (let index = 0; index < visibleGlowCount; index += 1) {
+      const candidate = glowCandidates[index];
+      const glow = this.oreGlowPool[index];
+      glow.setVisible(true);
+      glow.setPosition(Math.round(candidate.x), Math.round(candidate.y));
+      glow.setTint(candidate.color);
+      glow.setScale(candidate.scale);
+      glow.setAlpha(glowAlpha(candidate.alpha));
+    }
+
+    for (let index = visibleGlowCount; index < this.oreGlowPool.length; index += 1) {
+      this.oreGlowPool[index].setVisible(false);
+      this.oreGlowPool[index].setAlpha(0);
+    }
+
     this.lastVisibilityCenterTileX = centerTileX;
     this.lastVisibilityCenterTileY = centerTileY;
+    this.updateCaveEdgeChunkVisibility(visibleChunkKeys);
+
+    this.updateDynamicObjectVisibility();
+  }
+
+  private updateCaveEdgeChunkVisibility(visibleChunkKeys: Set<string>): void {
+    this.caveEdgeChunks.forEach((chunk, key) => {
+      chunk.setVisible(visibleChunkKeys.has(key));
+      chunk.setAlpha(this.caveEdgeAlpha);
+    });
+  }
+
+  private updateDynamicObjectVisibility(): void {
+    const player = this.state.player;
+    const inner = 230;
+    const outer = 760;
+    const alphaFor = (x: number, y: number, minAlpha: number, maxAlpha: number) => {
+      const dist = Math.hypot(x - player.x, y - player.y);
+      const t = Phaser.Math.Clamp((dist - inner) / (outer - inner), 0, 1);
+      return Phaser.Math.Linear(maxAlpha, minAlpha, t);
+    };
 
     this.enemySprites.forEach((sprite) => sprite.setAlpha(alphaFor(sprite.x, sprite.y, 0.18, 1)));
     this.enemyGlowSprites.forEach((sprite) => sprite.setAlpha(glowAlpha(alphaFor(sprite.x, sprite.y, 0.04, 0.42))));
     this.pickupSprites.forEach((sprite) => sprite.setAlpha(alphaFor(sprite.x, sprite.y, 0.2, 1)));
     this.pickupGlowSprites.forEach((sprite) => sprite.setAlpha(glowAlpha(alphaFor(sprite.x, sprite.y, 0.04, 0.52))));
     this.caveEdgeAlpha = alphaFor(player.x, player.y, 0.48, 0.78);
-    this.caveEdgeChunks.forEach((chunk) => chunk.setAlpha(this.caveEdgeAlpha));
   }
 
   private updateMoodPresentation(): void {
@@ -1377,10 +1553,24 @@ export class GameplayScene extends Phaser.Scene {
           : target.ore === "voltaic"
             ? 0x5ab8a8
             : 0xc47a8a;
-      this.objectiveGraphics.lineStyle(2, color, glowAlpha(lineAlpha));
-      this.objectiveGraphics.strokeRoundedRect(target.tileX * TILE_SIZE + 2, target.tileY * TILE_SIZE + 2, TILE_SIZE - 4, TILE_SIZE - 4, 4);
-      this.objectiveGraphics.fillStyle(color, glowAlpha(0.035 + lineAlpha * 0.035));
-      this.objectiveGraphics.fillRoundedRect(target.tileX * TILE_SIZE + 3, target.tileY * TILE_SIZE + 3, TILE_SIZE - 6, TILE_SIZE - 6, 3);
+      const distanceFade = Phaser.Math.Clamp(1 - Math.sqrt(distanceSq) / 720, 0.18, 1);
+      const alpha = glowAlpha(lineAlpha * distanceFade);
+      const left = target.tileX * TILE_SIZE + 4;
+      const top = target.tileY * TILE_SIZE + 4;
+      const right = left + TILE_SIZE - 8;
+      const bottom = top + TILE_SIZE - 8;
+      const bracket = 7;
+      this.objectiveGraphics.lineStyle(2, color, alpha);
+      this.objectiveGraphics.lineBetween(left, top, left + bracket, top);
+      this.objectiveGraphics.lineBetween(left, top, left, top + bracket);
+      this.objectiveGraphics.lineBetween(right, top, right - bracket, top);
+      this.objectiveGraphics.lineBetween(right, top, right, top + bracket);
+      this.objectiveGraphics.lineBetween(left, bottom, left + bracket, bottom);
+      this.objectiveGraphics.lineBetween(left, bottom, left, bottom - bracket);
+      this.objectiveGraphics.lineBetween(right, bottom, right - bracket, bottom);
+      this.objectiveGraphics.lineBetween(right, bottom, right, bottom - bracket);
+      this.objectiveGraphics.fillStyle(color, glowAlpha(0.055 * distanceFade + lineAlpha * 0.035));
+      this.objectiveGraphics.fillCircle(centerX, centerY, 4.5);
     }
   }
 
@@ -1448,15 +1638,9 @@ export class GameplayScene extends Phaser.Scene {
 
       const tx = Math.floor(event.x / TILE_SIZE);
       const ty = Math.floor(event.y / TILE_SIZE);
-      const idx = ty * this.state.world.width + tx;
-      
-      const sprite = this.tileSprites[idx];
-      sprite?.setVisible(false);
-
-      const glows = this.tileGlows[idx];
-      if (glows) {
-        glows.forEach((g) => g.destroy());
-        this.tileGlows[idx] = null;
+      const chunk = this.terrainChunkAt(tx, ty);
+      if (chunk) {
+        this.redrawTerrainChunk(chunk);
       }
 
       this.refreshCaveEdgesNearTile(tx, ty);

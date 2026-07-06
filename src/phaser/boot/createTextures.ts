@@ -5,6 +5,12 @@ import type { BlockId, EnemyId, OreId, ShipId, TerritoryId } from "../../game/si
 
 const TILE_VARIANT_COUNT = 4;
 const ORE_GLOW_ALPHA_SCALE = 0.7;
+export const BAKED_TEXTURE_PACK_URL = "/assets/generated/texture-pack.json";
+
+export interface BakedTexturePack {
+  version: 1;
+  textures: Record<string, string>;
+}
 
 function oreGlowAlpha(alpha: number): number {
   return Phaser.Math.Clamp(alpha * ORE_GLOW_ALPHA_SCALE, 0, 1);
@@ -17,6 +23,63 @@ export function createGeneratedTextures(scene: Phaser.Scene): void {
   createShipTexture(scene);
   createBossTextures(scene);
   createFxTextures(scene);
+}
+
+export function generatedTextureKeys(): string[] {
+  const keys: string[] = [];
+  const blocks = Object.keys(BLOCK_CONFIG) as BlockId[];
+  const territories: TerritoryId[] = ["shimmerVeins", "cinderHollows"];
+  for (const territory of territories) {
+    for (const block of blocks) {
+      const crackStates = block === "empty" ? [false] : [false, true];
+      const visualVariants = block === "empty" ? [0] : Array.from({ length: TILE_VARIANT_COUNT }, (_, index) => index);
+      for (const cracked of crackStates) {
+        for (const variant of visualVariants) {
+          keys.push(TEXTURES.tile(block, territory, cracked, variant));
+        }
+      }
+    }
+  }
+
+  for (const ore of Object.keys(ORE_CONFIG) as OreId[]) {
+    keys.push(TEXTURES.pickup(ore));
+  }
+  for (const power of ["repairPack", "coolantCell", "overdriveCell", "shieldCell"]) {
+    keys.push(TEXTURES.powerPickup(power));
+  }
+  for (const enemy of Object.keys(ENEMY_CONFIG) as EnemyId[]) {
+    keys.push(TEXTURES.enemy(enemy));
+  }
+  for (const ship of ["pickaxe", "lance", "titan"] as ShipId[]) {
+    keys.push(TEXTURES.ship(ship));
+  }
+  keys.push(
+    TEXTURES.reticle,
+    TEXTURES.bossHead,
+    TEXTURES.bossSegment,
+    TEXTURES.particleWhite,
+    TEXTURES.particleCyan,
+    TEXTURES.particleAmber,
+    TEXTURES.particleMagenta,
+    TEXTURES.bombCore,
+    "fx.glow.radial",
+    "fx.visibility.vignette"
+  );
+  return keys;
+}
+
+export function exportGeneratedTexturePack(scene: Phaser.Scene): BakedTexturePack {
+  const textures: Record<string, string> = {};
+  for (const key of generatedTextureKeys()) {
+    if (!scene.textures.exists(key)) {
+      continue;
+    }
+    textures[key] = scene.textures.getBase64(key);
+  }
+  return {
+    version: 1,
+    textures
+  };
 }
 
 function createTileTextures(scene: Phaser.Scene): void {

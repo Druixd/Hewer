@@ -32,13 +32,16 @@ const SWARM_BOMB_TILE_DAMAGE = 34;
 const SWARM_BOMB_RADIUS = 74;
 const SWARM_BOMB_COLOR = 0xd4845a;
 const OBJECTIVE_TARGET_RADIUS_TILES = 34;
-const OBJECTIVE_TARGET_LIMIT = 80;
+const OBJECTIVE_TARGET_LIMIT = 42;
+const OBJECTIVE_TARGET_CACHE_TILE_STEP = 3;
 const OBJECTIVE_WAVE_COOLDOWN = 8.5;
 const CHASE_PATH_MARGIN_TILES = 12;
-const CHASE_PATH_MAX_VISITS = 1500;
-const CHASE_PATH_FRAME_BUDGET = 6;
-const CHASE_PATH_CACHE_TIME = 0.28;
+const CHASE_PATH_MAX_VISITS = 360;
+const CHASE_PATH_FRAME_BUDGET = 2;
+const CHASE_PATH_CACHE_TIME = 0.55;
 const CHASE_PATH_REPATH_TILES = 3;
+const ENEMY_ACTIVE_DISTANCE = 1350;
+const ENEMY_ACTIVE_DISTANCE_SQ = ENEMY_ACTIVE_DISTANCE * ENEMY_ACTIVE_DISTANCE;
 const NEAR_MISS_DISTANCE = 10;
 const PLAYER_DAMAGE_KNOCKBACK = 118;
 const PLAYER_DAMAGE_KNOCKBACK_MAX_SPEED = 360;
@@ -610,8 +613,8 @@ function updateMissionState(state: GameState): void {
 }
 
 function getCachedObjectiveTargets(state: GameState, ore: OreId): ObjectiveTargetState[] {
-  const playerTileX = Math.floor(state.player.x / TILE_SIZE);
-  const playerTileY = Math.floor(state.player.y / TILE_SIZE);
+  const playerTileX = Math.floor(Math.floor(state.player.x / TILE_SIZE) / OBJECTIVE_TARGET_CACHE_TILE_STEP);
+  const playerTileY = Math.floor(Math.floor(state.player.y / TILE_SIZE) / OBJECTIVE_TARGET_CACHE_TILE_STEP);
   const cached = objectiveTargetCache.get(state);
   if (cached && cached.ore === ore && cached.tileX === playerTileX && cached.tileY === playerTileY) {
     return cached.targets;
@@ -765,7 +768,14 @@ function applyEliteRoll(enemy: EnemyDraft, seedValue: number, x: number, y: numb
 function updateEnemies(state: GameState, dt: number): void {
   for (let index = state.enemies.length - 1; index >= 0; index -= 1) {
     const enemy = state.enemies[index];
-    const playerDistance = distance(enemy, state.player);
+    const dxToPlayer = enemy.x - state.player.x;
+    const dyToPlayer = enemy.y - state.player.y;
+    const playerDistanceSq = dxToPlayer * dxToPlayer + dyToPlayer * dyToPlayer;
+    if (playerDistanceSq > ENEMY_ACTIVE_DISTANCE_SQ) {
+      enemy.timer += dt * 0.25;
+      continue;
+    }
+    const playerDistance = Math.sqrt(playerDistanceSq);
 
     if (enemy.kind === "arcWarden") {
       enemy.timer += dt;
