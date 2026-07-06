@@ -43,7 +43,17 @@ export function createGameState(seed: string, upgrades: UpgradeState): GameState
       shieldCooldown: 0,
       objectiveWaveCooldown: 0,
       invulnerableTimer: 0,
-      collectionPulse: 0
+      collectionPulse: 0,
+      killChain: 0,
+      killChainTimer: 0,
+      temporarySpeedBoostTimer: 0,
+      weaponBoostTimer: 0,
+      miningStreak: {
+        ore: null,
+        count: 0,
+        timer: 0,
+        magnetBoostTimer: 0
+      }
     },
     inventory: createEmptyInventory(),
     upgrades: progress,
@@ -52,7 +62,10 @@ export function createGameState(seed: string, upgrades: UpgradeState): GameState
       value: 0,
       max: 100,
       mood: "quiet",
-      zoneTimer: 0
+      zoneTimer: 0,
+      directionAngle: null,
+      dangerSwellTriggered: false,
+      dangerSwellTimer: 0
     },
     enemies: createInitialEnemies(world),
     pickups: [],
@@ -94,6 +107,8 @@ export function createGameState(seed: string, upgrades: UpgradeState): GameState
     events: [],
     status: "playing",
     runResult: null,
+    hitStopTimer: 0,
+    chainCreditsEarned: 0,
     elapsed: 0,
     minedBlocks: 0,
     enemiesKilled: 0
@@ -114,7 +129,8 @@ export function finishRun(state: GameState, outcome: RunOutcome): void {
     minedBlocks: state.minedBlocks,
     enemiesKilled: state.enemiesKilled,
     duration: state.elapsed,
-    creditsEarned: calculateRunValue({ inventory, voltrixCore }),
+    creditsEarned: calculateRunValue({ inventory, voltrixCore }) + state.chainCreditsEarned,
+    chainCreditsEarned: state.chainCreditsEarned,
     voltrixCore,
     taskCompleted: Boolean(state.upgrades.activeTask?.completed),
     activeTaskId: state.upgrades.activeTask?.taskId ?? null,
@@ -140,13 +156,15 @@ export function storeCargo(state: GameState): boolean {
     minedBlocks: state.minedBlocks,
     enemiesKilled: state.enemiesKilled,
     duration: state.elapsed,
-    creditsEarned: calculateRunValue({ inventory, voltrixCore }),
+    creditsEarned: calculateRunValue({ inventory, voltrixCore }) + state.chainCreditsEarned,
+    chainCreditsEarned: state.chainCreditsEarned,
     voltrixCore,
     taskCompleted: Boolean(state.upgrades.activeTask?.completed),
     activeTaskId: state.upgrades.activeTask?.taskId ?? null,
     bossAchievement: voltrixCore ? "voltrixCore" : null
   };
   state.inventory = createEmptyInventory();
+  state.chainCreditsEarned = 0;
   state.beam.active = false;
   return true;
 }

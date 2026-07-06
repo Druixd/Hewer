@@ -4,6 +4,7 @@ import {
   CRAFT_RECIPES,
   ORE_CONFIG,
   ORG_TASKS,
+  SHIP_CONFIG,
   TERRITORY_CONFIG,
   UNLOCK_CONFIG,
   UPGRADE_CONFIG,
@@ -26,6 +27,7 @@ import type {
   UpgradeId,
   UpgradeState,
   UnlockId,
+  ShipId,
   WeaponId
 } from "../types";
 
@@ -61,7 +63,9 @@ export function createDefaultProgress(): UpgradeState {
     bossAchievements: [],
     unlockedShopItems: ["dashModule", "shieldEmitter", "swarmBlast"],
     purchasedUnlocks: [],
-    equippedWeapon: "drillShot"
+    equippedWeapon: "drillShot",
+    unlockedShips: ["pickaxe"],
+    equippedShip: "pickaxe"
   };
 }
 
@@ -94,6 +98,10 @@ export function normalizeProgress(progress: Partial<UpgradeState>): UpgradeState
     ? progress.selectedTerritory ?? "shimmerVeins"
     : "shimmerVeins";
 
+  const completedTasks = Array.from(new Set(progress.completedTasks ?? []));
+  const unlockedShips = normalizeShips(progress.unlockedShips, completedTasks);
+  const equippedShip = normalizeShip(progress.equippedShip, unlockedShips);
+
   return {
     ...fallback,
     ...progress,
@@ -104,12 +112,14 @@ export function normalizeProgress(progress: Partial<UpgradeState>): UpgradeState
     },
     unlockedTerritories: Array.from(new Set(safeUnlockedTerritories)),
     activeTask: normalizeActiveTask(progress.activeTask ?? null),
-    completedTasks: Array.from(new Set(progress.completedTasks ?? [])),
+    completedTasks,
     craftedItems: progress.craftedItems ?? {},
     bossAchievements: Array.from(new Set((progress.bossAchievements ?? []).filter((achievement): achievement is BossAchievementId => achievement in BOSS_ACHIEVEMENTS))),
     unlockedShopItems: normalizeUnlocks(progress.unlockedShopItems, fallback.unlockedShopItems),
     purchasedUnlocks: normalizeUnlocks(progress.purchasedUnlocks, []),
-    equippedWeapon: normalizeWeapon(progress.equippedWeapon, progress.purchasedUnlocks)
+    equippedWeapon: normalizeWeapon(progress.equippedWeapon, progress.purchasedUnlocks),
+    unlockedShips,
+    equippedShip
   };
 }
 
@@ -149,17 +159,37 @@ function normalizeWeapon(value: WeaponId | undefined, purchasedUnlocks: UnlockId
   return !unlock || purchasedUnlocks?.includes(unlock) ? value : "drillShot";
 }
 
+function normalizeShips(value: ShipId[] | undefined, completedTasks: string[]): ShipId[] {
+  const ids = new Set<ShipId>(["pickaxe"]);
+  value?.forEach((id) => {
+    if (id in SHIP_CONFIG) {
+      ids.add(id);
+    }
+  });
+  for (const ship of Object.values(SHIP_CONFIG)) {
+    if (ship.unlockTask && completedTasks.includes(ship.unlockTask)) {
+      ids.add(ship.id);
+    }
+  }
+  return Array.from(ids);
+}
+
+function normalizeShip(value: ShipId | undefined, unlockedShips: ShipId[]): ShipId {
+  return value && value in SHIP_CONFIG && unlockedShips.includes(value) ? value : "pickaxe";
+}
+
 export function effectiveStats(upgrades: UpgradeState): EffectiveStats {
+  const ship = SHIP_CONFIG[upgrades.equippedShip] ?? SHIP_CONFIG.pickaxe;
   return {
-    laserDps: BASE_STATS.laserDps + upgrades.laserPower * 13,
-    heatCapacity: BASE_STATS.heatCapacity + upgrades.heatSink * 16,
+    laserDps: (BASE_STATS.laserDps + upgrades.laserPower * 13) * ship.statScale.laserDps,
+    heatCapacity: (BASE_STATS.heatCapacity + upgrades.heatSink * 16) * ship.statScale.heatCapacity,
     heatBuildLow: Math.max(12, BASE_STATS.heatBuildLow - upgrades.heatSink * 1.8),
     heatBuildHigh: Math.max(22, BASE_STATS.heatBuildHigh - upgrades.heatSink * 2.5),
     heatCoolRate: BASE_STATS.heatCoolRate + upgrades.heatSink * 5,
     magnetRadius: BASE_STATS.magnetRadius + upgrades.magnetRadius * 24,
-    maxHull: BASE_STATS.maxHull + upgrades.hull * 22,
-    moveSpeed: BASE_STATS.moveSpeed + upgrades.engine * 18,
-    dashDistance: BASE_STATS.dashDistance + upgrades.engine * 13
+    maxHull: (BASE_STATS.maxHull + upgrades.hull * 22) * ship.statScale.maxHull,
+    moveSpeed: (BASE_STATS.moveSpeed + upgrades.engine * 18) * ship.statScale.moveSpeed,
+    dashDistance: (BASE_STATS.dashDistance + upgrades.engine * 13) * ship.statScale.dashDistance
   };
 }
 
@@ -259,6 +289,16 @@ export function tryEquipWeapon(progress: UpgradeState, id: WeaponId): UpgradeSta
     return next;
   }
   next.equippedWeapon = id;
+  saveProgress(next);
+  return next;
+}
+
+export function tryEquipShip(progress: UpgradeState, id: ShipId): UpgradeState {
+  const next = normalizeProgress(progress);
+  if (!(id in SHIP_CONFIG) || !next.unlockedShips.includes(id)) {
+    return next;
+  }
+  next.equippedShip = id;
   saveProgress(next);
   return next;
 }
@@ -401,6 +441,13 @@ function completeTask(progress: UpgradeState, task: OrgTask): void {
 
   if (task.unlocks) {
     progress.unlockedShopItems = Array.from(new Set([...progress.unlockedShopItems, ...task.unlocks]));
+  }
+
+  const rewardedShips = Object.values(SHIP_CONFIG)
+    .filter((ship) => ship.unlockTask === task.id)
+    .map((ship) => ship.id);
+  if (rewardedShips.length) {
+    progress.unlockedShips = Array.from(new Set([...progress.unlockedShips, ...rewardedShips]));
   }
 
   if (progress.activeTask?.taskId === task.id) {

@@ -1,7 +1,7 @@
 import Phaser from "phaser";
 import { BLOCK_CONFIG, ENEMY_CONFIG, ORE_CONFIG } from "../../game/content/config";
 import { TEXTURES } from "../../game/assets/manifest";
-import type { BlockId, EnemyId, OreId, TerritoryId } from "../../game/simulation/types";
+import type { BlockId, EnemyId, OreId, ShipId, TerritoryId } from "../../game/simulation/types";
 
 const TILE_VARIANT_COUNT = 4;
 
@@ -349,6 +349,59 @@ function createPickupTextures(scene: Phaser.Scene): void {
     graphics.generateTexture(key, 20, 20);
     graphics.destroy();
   }
+
+  createPowerPickupTexture(scene, "repairPack", 0xc45a4a);
+  createPowerPickupTexture(scene, "coolantCell", 0x5ab8a8);
+  createPowerPickupTexture(scene, "overdriveCell", 0xe8c86a);
+  createPowerPickupTexture(scene, "shieldCell", 0x8a6db8);
+}
+
+function createPowerPickupTexture(scene: Phaser.Scene, id: string, color: number): void {
+  const key = TEXTURES.powerPickup(id);
+  if (scene.textures.exists(key)) {
+    return;
+  }
+
+  const graphics = scene.make.graphics({ x: 0, y: 0 }, false);
+  graphics.fillStyle(0x080706, 0.86);
+  graphics.fillCircle(12, 12, 10);
+  graphics.fillStyle(color, 0.32);
+  graphics.fillCircle(12, 12, 9);
+  graphics.lineStyle(2, color, 0.95);
+  graphics.strokeCircle(12, 12, 8);
+  graphics.lineStyle(2, 0xf0e4cc, 0.9);
+  if (id === "repairPack") {
+    graphics.lineBetween(12, 7, 12, 17);
+    graphics.lineBetween(7, 12, 17, 12);
+  } else if (id === "coolantCell") {
+    graphics.lineBetween(12, 6, 8, 14);
+    graphics.lineBetween(12, 6, 16, 14);
+    graphics.lineBetween(8, 14, 16, 14);
+  } else if (id === "overdriveCell") {
+    graphics.beginPath();
+    graphics.moveTo(13, 5);
+    graphics.lineTo(8, 13);
+    graphics.lineTo(13, 13);
+    graphics.lineTo(11, 19);
+    graphics.lineTo(18, 10);
+    graphics.lineTo(13, 10);
+    graphics.closePath();
+    graphics.strokePath();
+  } else {
+    graphics.beginPath();
+    graphics.moveTo(12, 5);
+    graphics.lineTo(18, 8);
+    graphics.lineTo(17, 15);
+    graphics.lineTo(12, 19);
+    graphics.lineTo(7, 15);
+    graphics.lineTo(6, 8);
+    graphics.closePath();
+    graphics.strokePath();
+  }
+  graphics.fillStyle(0xffffff, 0.88);
+  graphics.fillCircle(9, 8, 1.5);
+  graphics.generateTexture(key, 24, 24);
+  graphics.destroy();
 }
 
 function createEnemyTextures(scene: Phaser.Scene): void {
@@ -452,40 +505,15 @@ function createEnemyTextures(scene: Phaser.Scene): void {
 }
 
 function createShipTexture(scene: Phaser.Scene): void {
-  if (!scene.textures.exists(TEXTURES.ship)) {
+  const ships: ShipId[] = ["pickaxe", "lance", "titan"];
+  for (const ship of ships) {
+    const key = TEXTURES.ship(ship);
+    if (scene.textures.exists(key)) {
+      continue;
+    }
     const graphics = scene.make.graphics({ x: 0, y: 0 }, false);
-    
-    // Sleek wing shapes (white)
-    graphics.fillStyle(0xe8d8b4, 0.92);
-    graphics.beginPath();
-    graphics.moveTo(5, 8);
-    graphics.lineTo(25, 22);
-    graphics.lineTo(5, 36);
-    graphics.lineTo(15, 22);
-    graphics.closePath();
-    graphics.fillPath();
-    
-    // Sleek cockpit / hull (golden yellow)
-    graphics.fillStyle(0xd4845a, 1.0);
-    graphics.beginPath();
-    graphics.moveTo(13, 22);
-    graphics.lineTo(25, 14);
-    graphics.lineTo(48, 22);
-    graphics.lineTo(25, 30);
-    graphics.closePath();
-    graphics.fillPath();
-    
-    // Energy engine lines
-    graphics.lineStyle(1.5, 0xc4a86e, 0.9);
-    graphics.lineBetween(13, 22, 48, 22);
-    
-    // Cockpit glass (white/cyan glow)
-    graphics.fillStyle(0xe8d8b4, 0.92);
-    graphics.fillCircle(30, 22, 4.5);
-    graphics.fillStyle(0x5ab8a8, 0.75);
-    graphics.fillCircle(31, 22, 2.5);
-    
-    graphics.generateTexture(TEXTURES.ship, 56, 44);
+    drawHewerShip(graphics, ship);
+    graphics.generateTexture(key, 76, 56);
     graphics.destroy();
   }
 
@@ -499,6 +527,176 @@ function createShipTexture(scene: Phaser.Scene): void {
     graphics.lineBetween(16, 10, 20, 10);
     graphics.generateTexture(TEXTURES.reticle, 20, 20);
     graphics.destroy();
+  }
+}
+
+function drawHewerShip(graphics: Phaser.GameObjects.Graphics, ship: ShipId): void {
+  const centerY = 28;
+  const profile = ship === "lance"
+    ? { nose: 66, tail: 12, cockpitX: 44, wingTipX: 31, wingSpan: 17, bodyHalf: 6, rearHalf: 9, finDrop: 14 }
+    : ship === "titan"
+      ? { nose: 63, tail: 11, cockpitX: 40, wingTipX: 29, wingSpan: 19, bodyHalf: 8, rearHalf: 11, finDrop: 15 }
+      : { nose: 64, tail: 12, cockpitX: 41, wingTipX: 30, wingSpan: 18, bodyHalf: 7, rearHalf: 10, finDrop: 14 };
+
+  const top = ship === "lance" ? 0xd3bd54 : ship === "titan" ? 0x8d4cb8 : 0x2b9a8b;
+  const topDark = ship === "lance" ? 0x7f742e : ship === "titan" ? 0x472b68 : 0x15534f;
+  const topLight = ship === "lance" ? 0xf0d38a : ship === "titan" ? 0xc47aee : 0x75d6c8;
+  const underside = 0x121516;
+  const inner = 0x252a2a;
+  const plate = 0xc8bfa8;
+  const plateDim = 0x8e816b;
+  const outline = 0x08090a;
+  const copper = 0xd4845a;
+  const red = 0xc45a4a;
+  const cyan = 0x5ab8a8;
+  const cyanHot = 0xe2fff8;
+
+  graphics.fillStyle(0x000000, 0.24);
+  graphics.fillEllipse(37, centerY + 2, ship === "titan" ? 50 : 47, ship === "titan" ? 18 : 16);
+
+  // Dark underside fins first, so the colored top shell sits inside the silhouette.
+  graphics.fillStyle(underside, 0.98);
+  graphics.lineStyle(2, outline, 0.94);
+  graphics.beginPath();
+  graphics.moveTo(profile.tail + 11, centerY - 4);
+  graphics.lineTo(profile.wingTipX - 6, centerY - profile.wingSpan);
+  graphics.lineTo(profile.wingTipX + 9, centerY - 11);
+  graphics.lineTo(profile.cockpitX - 10, centerY - profile.bodyHalf);
+  graphics.lineTo(profile.tail + 17, centerY - 2);
+  graphics.closePath();
+  graphics.fillPath();
+  graphics.strokePath();
+  graphics.beginPath();
+  graphics.moveTo(profile.tail + 11, centerY + 4);
+  graphics.lineTo(profile.wingTipX - 6, centerY + profile.wingSpan);
+  graphics.lineTo(profile.wingTipX + 9, centerY + 11);
+  graphics.lineTo(profile.cockpitX - 10, centerY + profile.bodyHalf);
+  graphics.lineTo(profile.tail + 17, centerY + 2);
+  graphics.closePath();
+  graphics.fillPath();
+  graphics.strokePath();
+
+  // Bright swept top panels, closer to the provided angular ship references.
+  graphics.fillStyle(top, 0.96);
+  graphics.lineStyle(2.4, outline, 0.98);
+  graphics.beginPath();
+  graphics.moveTo(profile.tail + 5, centerY - profile.rearHalf);
+  graphics.lineTo(profile.wingTipX + 5, centerY - profile.wingSpan + 4);
+  graphics.lineTo(profile.cockpitX + 6, centerY - 7);
+  graphics.lineTo(profile.nose - 5, centerY - 3);
+  graphics.lineTo(profile.nose + 4, centerY);
+  graphics.lineTo(profile.nose - 5, centerY + 3);
+  graphics.lineTo(profile.cockpitX + 6, centerY + 7);
+  graphics.lineTo(profile.wingTipX + 5, centerY + profile.wingSpan - 4);
+  graphics.lineTo(profile.tail + 5, centerY + profile.rearHalf);
+  graphics.lineTo(profile.tail + 17, centerY);
+  graphics.closePath();
+  graphics.fillPath();
+  graphics.strokePath();
+
+  // Dark center spine and nose reinforce direction.
+  graphics.fillStyle(inner, 0.92);
+  graphics.beginPath();
+  graphics.moveTo(profile.tail + 14, centerY - 8);
+  graphics.lineTo(profile.cockpitX - 7, centerY - 6);
+  graphics.lineTo(profile.nose - 14, centerY - 2);
+  graphics.lineTo(profile.nose - 6, centerY);
+  graphics.lineTo(profile.nose - 14, centerY + 2);
+  graphics.lineTo(profile.cockpitX - 7, centerY + 6);
+  graphics.lineTo(profile.tail + 14, centerY + 8);
+  graphics.closePath();
+  graphics.fillPath();
+
+  graphics.fillStyle(topDark, 0.74);
+  graphics.beginPath();
+  graphics.moveTo(profile.tail + 10, centerY - profile.rearHalf + 3);
+  graphics.lineTo(profile.wingTipX + 6, centerY - profile.wingSpan + 7);
+  graphics.lineTo(profile.cockpitX - 3, centerY - 6);
+  graphics.lineTo(profile.tail + 18, centerY - 4);
+  graphics.closePath();
+  graphics.fillPath();
+  graphics.beginPath();
+  graphics.moveTo(profile.tail + 10, centerY + profile.rearHalf - 3);
+  graphics.lineTo(profile.wingTipX + 6, centerY + profile.wingSpan - 7);
+  graphics.lineTo(profile.cockpitX - 3, centerY + 6);
+  graphics.lineTo(profile.tail + 18, centerY + 4);
+  graphics.closePath();
+  graphics.fillPath();
+
+  graphics.lineStyle(1.3, plate, 0.72);
+  graphics.beginPath();
+  graphics.moveTo(profile.tail + 16, centerY - 8);
+  graphics.lineTo(profile.cockpitX + 7, centerY - 6);
+  graphics.moveTo(profile.tail + 16, centerY + 8);
+  graphics.lineTo(profile.cockpitX + 7, centerY + 6);
+  graphics.strokePath();
+
+  // Accent slashes match the reference vibe without copying it.
+  graphics.lineStyle(2, ship === "lance" ? cyan : red, 0.86);
+  graphics.beginPath();
+  graphics.moveTo(profile.wingTipX + 1, centerY - profile.wingSpan + 6);
+  graphics.lineTo(profile.cockpitX + 2, centerY - 6);
+  graphics.moveTo(profile.wingTipX + 1, centerY + profile.wingSpan - 6);
+  graphics.lineTo(profile.cockpitX + 2, centerY + 6);
+  graphics.strokePath();
+
+  // Centered canopy.
+  graphics.fillStyle(cyan, 0.82);
+  graphics.lineStyle(2, outline, 0.86);
+  graphics.beginPath();
+  graphics.moveTo(profile.cockpitX - 7, centerY - 6);
+  graphics.lineTo(profile.cockpitX + 5, centerY - 4);
+  graphics.lineTo(profile.cockpitX + 10, centerY);
+  graphics.lineTo(profile.cockpitX + 5, centerY + 4);
+  graphics.lineTo(profile.cockpitX - 7, centerY + 6);
+  graphics.lineTo(profile.cockpitX - 4, centerY);
+  graphics.closePath();
+  graphics.fillPath();
+  graphics.strokePath();
+  graphics.fillStyle(cyanHot, 0.9);
+  graphics.fillCircle(profile.cockpitX + 2, centerY - 2, 1.4);
+
+  // Drill-nose and engine pods.
+  graphics.fillStyle(copper, 0.88);
+  graphics.lineStyle(2, outline, 0.8);
+  graphics.beginPath();
+  graphics.moveTo(profile.nose - 7, centerY - 3);
+  graphics.lineTo(profile.nose + 5, centerY);
+  graphics.lineTo(profile.nose - 7, centerY + 3);
+  graphics.closePath();
+  graphics.fillPath();
+  graphics.strokePath();
+
+  graphics.fillStyle(outline, 0.96);
+  graphics.fillRoundedRect(profile.tail - 1, centerY - 10, 10, 5, 2);
+  graphics.fillRoundedRect(profile.tail - 1, centerY + 5, 10, 5, 2);
+  graphics.fillStyle(copper, 0.82);
+  graphics.fillRect(profile.tail - 6, centerY - 8, 5, 2);
+  graphics.fillRect(profile.tail - 6, centerY + 7, 5, 2);
+
+  graphics.lineStyle(2, cyan, 0.54);
+  graphics.lineBetween(profile.tail - 7, centerY - 7, profile.tail - 15, centerY - 7);
+  graphics.lineBetween(profile.tail - 7, centerY + 8, profile.tail - 15, centerY + 8);
+
+  graphics.lineStyle(1.5, plateDim, 0.72);
+  const ventCount = ship === "lance" ? 3 : 4;
+  for (let i = 0; i < ventCount; i += 1) {
+    const x = profile.tail + 15 + i * 5;
+    graphics.lineBetween(x, centerY - 15, x + 3, centerY - 15);
+    graphics.lineBetween(x, centerY + 15, x + 3, centerY + 15);
+  }
+
+  if (ship === "titan") {
+    graphics.fillStyle(0x17191a, 0.86);
+    graphics.lineStyle(2, plateDim, 0.72);
+    graphics.strokeRoundedRect(22, centerY - 15, 12, 4, 2);
+    graphics.strokeRoundedRect(22, centerY + 11, 12, 4, 2);
+    graphics.fillRoundedRect(10, centerY - 13, 8, 4, 2);
+    graphics.fillRoundedRect(10, centerY + 9, 8, 4, 2);
+  } else if (ship === "lance") {
+    graphics.lineStyle(1.5, topLight, 0.68);
+    graphics.lineBetween(37, centerY - 9, 58, centerY - 3);
+    graphics.lineBetween(37, centerY + 9, 58, centerY + 3);
   }
 }
 

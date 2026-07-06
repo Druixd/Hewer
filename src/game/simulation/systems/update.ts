@@ -3,6 +3,7 @@ import { finishRun, storeCargo } from "../state";
 import { canCraftActiveTask, getActiveTask, getTaskStepStates, hasUnlock, recordBossAchievement, recordTaskCollection } from "./progression";
 import {
   TILE_SIZE,
+  type BlockId,
   type BombState,
   type BossSegmentState,
   type EnemyState,
@@ -13,6 +14,7 @@ import {
   type ObjectiveTargetState,
   type OreId,
   type PickupState,
+  type PowerDropId,
   type ProjectileState,
   type TileState,
   type Vec2
@@ -34,11 +36,22 @@ const OBJECTIVE_TARGET_LIMIT = 80;
 const OBJECTIVE_WAVE_COOLDOWN = 8.5;
 const CHASE_PATH_MARGIN_TILES = 12;
 const CHASE_PATH_MAX_VISITS = 1500;
+const NEAR_MISS_DISTANCE = 10;
+const PLAYER_DAMAGE_KNOCKBACK = 118;
+const PLAYER_DAMAGE_KNOCKBACK_MAX_SPEED = 360;
+const POWER_DROP_COLORS: Record<PowerDropId, number> = {
+  repairPack: 0xc45a4a,
+  coolantCell: 0x5ab8a8,
+  overdriveCell: 0xe8c86a,
+  shieldCell: 0x8a6db8
+};
 
 interface PathTile {
   x: number;
   y: number;
 }
+
+type EnemyDraft = Omit<EnemyState, "elite" | "eliteTier">;
 
 export function updateGame(state: GameState, actions: InputActions, dt: number): void {
   state.events = [];
@@ -48,10 +61,17 @@ export function updateGame(state: GameState, actions: InputActions, dt: number):
     return;
   }
 
+  if (state.hitStopTimer > 0) {
+    state.hitStopTimer = Math.max(0, state.hitStopTimer - dt);
+    state.beam.active = false;
+    return;
+  }
+
   state.elapsed += dt;
   state.threat.zoneTimer += dt;
   state.threat.value = clamp(state.threat.value + dt * 0.32, 0, state.threat.max);
   state.mission.introTimer = Math.max(0, state.mission.introTimer - dt);
+  updateRewardTimers(state, dt);
   if (!state.mission.started) {
     state.mission.started = true;
     addEvent(state, "mission-started", state.player.x, state.player.y, 0xe8c86a);
@@ -74,6 +94,7 @@ export function updateGame(state: GameState, actions: InputActions, dt: number):
   state.beam.active = false;
 
   updateThreatMood(state);
+  updateThreatDirection(state);
   movePlayer(state, actions, dt);
   activateShield(state, actions);
   fireSwarmBomb(state, actions);
@@ -101,9 +122,27 @@ export function updateGame(state: GameState, actions: InputActions, dt: number):
   }
 }
 
+function updateRewardTimers(state: GameState, dt: number): void {
+  state.player.temporarySpeedBoostTimer = Math.max(0, state.player.temporarySpeedBoostTimer - dt);
+  state.player.weaponBoostTimer = Math.max(0, state.player.weaponBoostTimer - dt);
+  state.player.miningStreak.timer = Math.max(0, state.player.miningStreak.timer - dt);
+  state.player.miningStreak.magnetBoostTimer = Math.max(0, state.player.miningStreak.magnetBoostTimer - dt);
+  if (state.player.miningStreak.timer <= 0) {
+    state.player.miningStreak.ore = null;
+    state.player.miningStreak.count = 0;
+  }
+
+  state.threat.dangerSwellTimer = Math.max(0, state.threat.dangerSwellTimer - dt);
+  if (!state.threat.dangerSwellTriggered && state.threat.value >= state.threat.max * 0.9) {
+    state.threat.dangerSwellTriggered = true;
+    state.threat.dangerSwellTimer = 3;
+    addEvent(state, "danger-swell", state.player.x, state.player.y, 0xc45a4a);
+  }
+}
+
 function movePlayer(state: GameState, actions: InputActions, dt: number): void {
   const move = normalize(actions.move);
-  const speed = state.stats.moveSpeed;
+  const speed = state.stats.moveSpeed * (state.player.temporarySpeedBoostTimer > 0 ? 1.22 : 1);
   const targetVx = move.x * speed;
   const targetVy = move.y * speed;
   state.player.vx = lerp(state.player.vx, targetVx, 0.22);
@@ -381,8 +420,9 @@ function updateDrillShotWeapon(state: GameState, actions: InputActions, dt: numb
   const direction = length(aimDir) === 0
     ? { x: Math.cos(player.angle), y: Math.sin(player.angle) }
     : aimDir;
-  const fireInterval = lerp(weapon.baseInterval, weapon.fastInterval, player.weaponSpool);
-  const shotHeat = lerp(weapon.heatMax, weapon.heatMin, player.weaponSpool);
+  const boosted = player.weaponBoostTimer > 0;
+  const fireInterval = lerp(weapon.baseInterval, weapon.fastInterval, player.weaponSpool) * (boosted ? 0.82 : 1);
+  const shotHeat = lerp(weapon.heatMax, weapon.heatMin, player.weaponSpool) * (boosted ? 0.86 : 1);
   player.heat += shotHeat;
   player.weaponCooldown = fireInterval;
 
@@ -407,9 +447,10 @@ function updateDrillShotWeapon(state: GameState, actions: InputActions, dt: numb
       radius: weapon.id === "piercer" ? 6 : 5,
       age: 0,
       lifetime: weapon.lifetime,
-      damage: weapon.damage + state.upgrades.laserPower * (weapon.id === "scatter" ? 2.4 : 4),
+      damage: (weapon.damage + state.upgrades.laserPower * (weapon.id === "scatter" ? 2.4 : 4)) * (boosted ? 1.24 : 1),
       color: weapon.id === "piercer" ? 0xf0e4cc : weapon.id === "scatter" ? 0xd4845a : 0xe8c86a,
-      pierces: weapon.pierces
+      pierces: weapon.pierces,
+      nearMissed: false
     };
     state.projectiles.push(projectile);
     addEvent(state, "projectile-fired", projectile.x, projectile.y, projectile.color, player.weaponSpool);
@@ -441,6 +482,15 @@ function updateProjectiles(state: GameState, dt: number): void {
         addEvent(state, "projectile-hit", nextX, nextY, projectile.color, projectile.damage);
         state.projectiles.splice(index, 1);
         continue;
+      }
+
+      if (!projectile.nearMissed) {
+        const nearDistance = distanceToSegment(state.player, { x: projectile.x, y: projectile.y }, { x: nextX, y: nextY });
+        if (nearDistance <= projectile.radius + NEAR_MISS_DISTANCE) {
+          projectile.nearMissed = true;
+          state.player.temporarySpeedBoostTimer = Math.max(state.player.temporarySpeedBoostTimer, 0.3);
+          addEvent(state, "near-miss", nextX, nextY, 0xf0e4cc);
+        }
       }
 
       projectile.x = nextX;
@@ -629,7 +679,7 @@ function createObjectiveWaveEnemy(state: GameState, index: number): EnemyState |
       continue;
     }
 
-    return {
+    return applyEliteRoll({
       id: `wave-${state.elapsed.toFixed(3)}-${index}-${state.enemies.length}`,
       kind,
       x,
@@ -647,10 +697,30 @@ function createObjectiveWaveEnemy(state: GameState, index: number): EnemyState |
       direction: noiseFor(y, x, 933) > 0.5 ? 1 : -1,
       targetX: state.player.x,
       targetY: state.player.y
-    };
+    }, state.elapsed + index, x, y);
   }
 
   return null;
+}
+
+function applyEliteRoll(enemy: EnemyDraft, seedValue: number, x: number, y: number): EnemyState {
+  const elite = noiseFor(seedValue, x + enemy.radius, 934) < 0.12;
+  if (!elite) {
+    return {
+      ...enemy,
+      elite: false,
+      eliteTier: null
+    };
+  }
+
+  return {
+    ...enemy,
+    elite: true,
+    eliteTier: 1,
+    health: enemy.health * 1.8,
+    maxHealth: enemy.maxHealth * 1.8,
+    radius: enemy.radius * 1.3
+  };
 }
 
 function updateEnemies(state: GameState, dt: number): void {
@@ -663,7 +733,7 @@ function updateEnemies(state: GameState, dt: number): void {
       const pulseActive = enemy.timer % 3.2 < 1.28;
       enemy.state = pulseActive ? "pulsing" : "idle";
       if (pulseActive && playerDistance < 70) {
-        damagePlayer(state, ENEMY_CONFIG.arcWarden.damage * dt * 1.3, enemy.x, enemy.y);
+        damagePlayer(state, enemyDamage(enemy) * dt * 1.3, enemy.x, enemy.y);
       }
     }
 
@@ -701,7 +771,7 @@ function updateEnemies(state: GameState, dt: number): void {
         }
         enemy.timer -= dt;
         if (playerDistance < enemy.radius + 14) {
-          damagePlayer(state, ENEMY_CONFIG.prismStalker.damage, enemy.x, enemy.y);
+          damagePlayer(state, enemyDamage(enemy), enemy.x, enemy.y);
         }
         if (enemy.timer <= 0) {
           enemy.cooldown = 1.6;
@@ -745,11 +815,11 @@ function updateEnemies(state: GameState, dt: number): void {
 
       if (enemy.cooldown <= 0 && playerDistance < 280) {
         enemy.cooldown = 1.55;
-        fireHostileProjectile(state, enemy.x, enemy.y, state.player.x, state.player.y, 260, 9, 0xe8c86a, 0.06);
+        fireHostileProjectile(state, enemy.x, enemy.y, state.player.x, state.player.y, 260, enemyDamage(enemy) * 0.9, 0xe8c86a, 0.06);
       }
 
       if (playerDistance < enemy.radius + 13) {
-        damagePlayer(state, ENEMY_CONFIG.phaseMite.damage, enemy.x, enemy.y);
+        damagePlayer(state, enemyDamage(enemy), enemy.x, enemy.y);
       }
     }
   }
@@ -849,7 +919,8 @@ function fireHostileProjectile(
     lifetime: 2.2,
     damage,
     color,
-    pierces: 0
+    pierces: 0,
+    nearMissed: false
   });
 }
 
@@ -885,13 +956,14 @@ function updatePickups(state: GameState, dt: number): void {
     pickup.age += dt;
     const dist = distance(pickup, state.player);
 
-    if (dist < state.stats.magnetRadius) {
+    const magnetRadius = state.stats.magnetRadius * (state.player.miningStreak.magnetBoostTimer > 0 ? 1.3 : 1);
+    if (dist < magnetRadius) {
       pickup.magnetized = true;
     }
 
     if (pickup.magnetized) {
       const dir = normalize({ x: state.player.x - pickup.x, y: state.player.y - pickup.y });
-      const force = 440 + Math.max(0, state.stats.magnetRadius - dist) * 4.8;
+      const force = 440 + Math.max(0, magnetRadius - dist) * 4.8;
       pickup.vx = lerp(pickup.vx, dir.x * force, 0.15);
       pickup.vy = lerp(pickup.vy, dir.y * force, 0.15);
     } else {
@@ -903,6 +975,16 @@ function updatePickups(state: GameState, dt: number): void {
     pickup.y += pickup.vy * dt;
 
     if (dist < 20) {
+      if (pickup.kind === "power" && pickup.power) {
+        applyPowerPickup(state, pickup.power);
+        addEvent(state, "power-pickup-collected", pickup.x, pickup.y, POWER_DROP_COLORS[pickup.power], 1, undefined, undefined, pickup.power);
+        state.pickups.splice(index, 1);
+        continue;
+      }
+      if (!pickup.ore) {
+        state.pickups.splice(index, 1);
+        continue;
+      }
       state.inventory[pickup.ore] += 1;
       const activeTask = getActiveTask(state.upgrades);
       const contributesToTask = Boolean(
@@ -910,7 +992,7 @@ function updatePickups(state: GameState, dt: number): void {
       );
       recordTaskCollection(state.upgrades, pickup.ore, 1);
       state.player.collectionPulse = 0.18;
-      addEvent(state, "pickup-collected", pickup.x, pickup.y, ORE_CONFIG[pickup.ore].color);
+      addEvent(state, "pickup-collected", pickup.x, pickup.y, ORE_CONFIG[pickup.ore].color, 1, undefined, undefined, pickup.ore);
       if (contributesToTask) {
         addEvent(state, "task-progress", pickup.x, pickup.y, ORE_CONFIG[pickup.ore].color, 1);
       }
@@ -936,14 +1018,35 @@ function damageTile(state: GameState, tile: TileState, amount: number): void {
   state.threat.value = clamp(state.threat.value + 0.5, 0, state.threat.max);
 
   if (config.drop) {
+    recordMiningStreak(state, config.drop);
     const count = config.dropMin + Math.floor(noiseFor(tile.x, tile.y, 500) * (config.dropMax - config.dropMin + 1));
     for (let index = 0; index < count; index += 1) {
       spawnPickup(state, config.drop, centerX, centerY, index);
     }
     state.threat.value = clamp(state.threat.value + ORE_CONFIG[config.drop].threat, 0, state.threat.max);
+    maybeSpawnTilePowerDrop(state, config.drop, centerX, centerY, tile.x, tile.y);
   }
 
+  setHitStop(state, hitStopForBlock(tile.type));
   addEvent(state, "tile-broken", centerX, centerY, config.glow);
+}
+
+function recordMiningStreak(state: GameState, ore: OreId): void {
+  const streak = state.player.miningStreak;
+  if (streak.ore === ore && streak.timer > 0) {
+    streak.count += 1;
+  } else {
+    streak.ore = ore;
+    streak.count = 1;
+  }
+
+  streak.timer = 4;
+  if (streak.count >= 5) {
+    streak.magnetBoostTimer = Math.max(streak.magnetBoostTimer, 5);
+  }
+  if (streak.count >= 8) {
+    state.player.temporarySpeedBoostTimer = Math.max(state.player.temporarySpeedBoostTimer, 1.2);
+  }
 }
 
 function spawnPickup(state: GameState, ore: OreId, x: number, y: number, index: number): void {
@@ -951,6 +1054,7 @@ function spawnPickup(state: GameState, ore: OreId, x: number, y: number, index: 
   const speed = 50 + noiseFor(y, x + index, 602) * 90;
   const pickup: PickupState = {
     id: `pickup-${state.elapsed.toFixed(3)}-${state.pickups.length}-${index}`,
+    kind: "ore",
     ore,
     x,
     y,
@@ -960,6 +1064,51 @@ function spawnPickup(state: GameState, ore: OreId, x: number, y: number, index: 
     age: 0
   };
   state.pickups.push(pickup);
+}
+
+function spawnPowerPickup(state: GameState, power: PowerDropId, x: number, y: number, index: number): void {
+  const angle = noiseFor(x + index, y, 771) * Math.PI * 2;
+  const speed = 42 + noiseFor(y, x + index, 772) * 76;
+  state.pickups.push({
+    id: `power-${state.elapsed.toFixed(3)}-${state.pickups.length}-${index}`,
+    kind: "power",
+    power,
+    x,
+    y,
+    vx: Math.cos(angle) * speed,
+    vy: Math.sin(angle) * speed,
+    magnetized: false,
+    age: 0
+  });
+}
+
+function maybeSpawnTilePowerDrop(state: GameState, ore: OreId, x: number, y: number, tileX: number, tileY: number): void {
+  const roll = noiseFor(tileX, tileY, 731);
+  if (ore === "ferrite" && roll > 0.93) {
+    spawnPowerPickup(state, "repairPack", x, y, 80);
+  } else if (ore === "shimmer" && roll > 0.945) {
+    spawnPowerPickup(state, "coolantCell", x, y, 81);
+  } else if (ore === "voltaic" && roll > 0.92) {
+    spawnPowerPickup(state, "overdriveCell", x, y, 82);
+  } else if (ore === "aetherium" && roll > 0.88) {
+    spawnPowerPickup(state, "shieldCell", x, y, 83);
+  }
+}
+
+function applyPowerPickup(state: GameState, power: PowerDropId): void {
+  if (power === "repairPack") {
+    state.player.hull = Math.min(state.player.maxHull, state.player.hull + state.player.maxHull * 0.24);
+  } else if (power === "coolantCell") {
+    state.player.heat = Math.max(0, state.player.heat - state.stats.heatCapacity * 0.55);
+    state.player.overheatedTimer = 0;
+  } else if (power === "overdriveCell") {
+    state.player.weaponBoostTimer = Math.max(state.player.weaponBoostTimer, 6);
+  } else {
+    state.player.shield = Math.min(state.player.shieldMax, state.player.shield + 38);
+    state.player.shieldCooldown = Math.max(0, state.player.shieldCooldown - 2.4);
+    state.player.invulnerableTimer = Math.max(state.player.invulnerableTimer, 0.18);
+  }
+  state.player.collectionPulse = 0.22;
 }
 
 function damageEnemy(state: GameState, enemy: EnemyState, amount: number): void {
@@ -980,8 +1129,40 @@ function damageEnemy(state: GameState, enemy: EnemyState, amount: number): void 
   }
 
   state.enemiesKilled += 1;
-  state.threat.value = clamp(state.threat.value + ENEMY_CONFIG[enemy.kind].threatOnKill, 0, state.threat.max);
-  addEvent(state, "enemy-killed", enemy.x, enemy.y, ENEMY_CONFIG[enemy.kind].color);
+  state.threat.value = clamp(state.threat.value + ENEMY_CONFIG[enemy.kind].threatOnKill * (enemy.elite ? 3 : 1), 0, state.threat.max);
+  if (enemy.elite) {
+    dropEliteReward(state, enemy);
+  } else {
+    maybeDropEnemyPower(state, enemy);
+  }
+  setHitStop(state, 0.04);
+  addEvent(state, "enemy-killed", enemy.x, enemy.y, ENEMY_CONFIG[enemy.kind].color, undefined, undefined, undefined, enemyLabel(enemy));
+}
+
+function dropEliteReward(state: GameState, enemy: EnemyState): void {
+  const count = 1 + Math.floor(noiseFor(enemy.x, enemy.y, 941) * 2);
+  for (let index = 0; index < count; index += 1) {
+    const roll = noiseFor(enemy.y + index, enemy.x, 942);
+    const ore: OreId = roll > 0.78 ? "aetherium" : roll > 0.38 ? "voltaic" : "shimmer";
+    spawnPickup(state, ore, enemy.x, enemy.y, 20 + index);
+  }
+  const eliteRoll = noiseFor(enemy.x, enemy.y, 946);
+  spawnPowerPickup(state, eliteRoll > 0.66 ? "overdriveCell" : eliteRoll > 0.33 ? "repairPack" : "coolantCell", enemy.x, enemy.y, 34);
+}
+
+function maybeDropEnemyPower(state: GameState, enemy: EnemyState): void {
+  const roll = noiseFor(enemy.x, enemy.y, 944);
+  if (roll < 0.88) {
+    return;
+  }
+  const power: PowerDropId = enemy.kind === "sparkSac"
+    ? "coolantCell"
+    : enemy.kind === "phaseMite"
+      ? "overdriveCell"
+      : roll > 0.96
+        ? "shieldCell"
+        : "repairPack";
+  spawnPowerPickup(state, power, enemy.x, enemy.y, 30);
 }
 
 function explodeSparkSac(state: GameState, enemy: EnemyState): void {
@@ -996,7 +1177,7 @@ function explodeSparkSac(state: GameState, enemy: EnemyState): void {
     age: 0,
     duration: 0.42,
     damageAt: 0.06,
-    damage: ENEMY_CONFIG.sparkSac.damage,
+    damage: enemyDamage(enemy),
     applied: false
   };
   state.hazards.push(hazard);
@@ -1065,8 +1246,12 @@ function damageBoss(state: GameState, amount: number, x: number, y: number): voi
     state.boss.health = 0;
     state.boss.defeated = true;
     state.boss.active = false;
-    state.threat.value = Math.min(state.threat.value, state.threat.max * 0.42);
+    state.threat.value = 0;
     state.threat.zoneTimer = 0;
+    state.threat.mood = "quiet";
+    state.threat.directionAngle = null;
+    state.threat.dangerSwellTimer = 0;
+    state.threat.dangerSwellTriggered = false;
     dropBossReward(state);
     recordBossAchievement(state.upgrades, state.boss.kind);
     addEvent(state, "boss-defeated", state.boss.x, state.boss.y, 0xc47a8a);
@@ -1091,6 +1276,8 @@ function dropBossReward(state: GameState): void {
       dropIndex += 1;
     }
   }
+  spawnPowerPickup(state, state.boss.kind === "sentinelEye" ? "overdriveCell" : "shieldCell", state.boss.x, state.boss.y, 90 + dropIndex);
+  spawnPowerPickup(state, "repairPack", state.boss.x, state.boss.y, 91 + dropIndex);
 }
 
 function createLightning(state: GameState, x1: number, y1: number, x2: number, y2: number): void {
@@ -1115,6 +1302,8 @@ function damagePlayer(state: GameState, amount: number, x: number, y: number): v
     return;
   }
 
+  applyPlayerDamageKnockback(state, x, y);
+
   if (state.player.shieldActiveTimer > 0 && state.player.shield > 0) {
     const absorbed = Math.min(state.player.shield, amount);
     state.player.shield -= absorbed;
@@ -1131,7 +1320,31 @@ function damagePlayer(state: GameState, amount: number, x: number, y: number): v
 
   state.player.hull = Math.max(0, state.player.hull - amount);
   state.player.invulnerableTimer = 0.35;
-  addEvent(state, "player-hit", x, y, 0xc45a4a, amount);
+  setHitStop(state, 0.025);
+  addEvent(state, "player-hit", state.player.x, state.player.y, 0xc45a4a, amount, x, y);
+}
+
+function applyPlayerDamageKnockback(state: GameState, sourceX: number, sourceY: number): void {
+  const player = state.player;
+  let direction = normalize({ x: player.x - sourceX, y: player.y - sourceY });
+
+  if (length(direction) === 0) {
+    direction = normalize({ x: -player.vx, y: -player.vy });
+  }
+
+  if (length(direction) === 0) {
+    direction = { x: -Math.cos(player.angle), y: -Math.sin(player.angle) };
+  }
+
+  player.vx += direction.x * PLAYER_DAMAGE_KNOCKBACK;
+  player.vy += direction.y * PLAYER_DAMAGE_KNOCKBACK;
+
+  const speed = Math.hypot(player.vx, player.vy);
+  if (speed > PLAYER_DAMAGE_KNOCKBACK_MAX_SPEED) {
+    const scale = PLAYER_DAMAGE_KNOCKBACK_MAX_SPEED / speed;
+    player.vx *= scale;
+    player.vy *= scale;
+  }
 }
 
 function moveEnemyWithCollision(
@@ -1433,6 +1646,7 @@ function circleHitsSolid(state: GameState, x: number, y: number, radius: number)
 function updateThreatMood(state: GameState): void {
   if (state.boss.active) {
     state.threat.mood = "breakout";
+    state.threat.directionAngle = Math.atan2(state.boss.y - state.player.y, state.boss.x - state.player.x);
     return;
   }
 
@@ -1445,8 +1659,84 @@ function updateThreatMood(state: GameState): void {
   }
 }
 
-function addEvent(state: GameState, type: GameEvent["type"], x: number, y: number, color: number, amount?: number): void {
-  state.events.push({ type, x, y, color, amount });
+function updateThreatDirection(state: GameState): void {
+  if (state.boss.active) {
+    state.threat.directionAngle = Math.atan2(state.boss.y - state.player.y, state.boss.x - state.player.x);
+    return;
+  }
+
+  if (state.threat.value < state.threat.max * 0.5) {
+    state.threat.directionAngle = null;
+    return;
+  }
+
+  const target = findThreatDirectionTarget(state);
+  state.threat.directionAngle = Math.atan2(target.y - state.player.y, target.x - state.player.x);
+}
+
+function findThreatDirectionTarget(state: GameState): Vec2 {
+  const preferredAngle = -0.28;
+  const radiusOptions = [520, 620, 440, 700, 360, 780];
+  let fallback = { x: state.player.x + Math.cos(preferredAngle) * 520, y: state.player.y + Math.sin(preferredAngle) * 520 };
+  let bestDistance = Number.POSITIVE_INFINITY;
+
+  for (const radius of radiusOptions) {
+    for (let step = 0; step < 20; step += 1) {
+      const angle = preferredAngle + (step % 2 === 0 ? 1 : -1) * Math.ceil(step / 2) * 0.24;
+      const x = state.player.x + Math.cos(angle) * radius;
+      const y = state.player.y + Math.sin(angle) * radius;
+      const dist = distance({ x, y }, state.player);
+      if (dist < bestDistance) {
+        fallback = { x, y };
+        bestDistance = dist;
+      }
+      if (isValidEnemySpawn(state, x, y, 34)) {
+        return { x, y };
+      }
+    }
+  }
+
+  return fallback;
+}
+
+function addEvent(
+  state: GameState,
+  type: GameEvent["type"],
+  x: number,
+  y: number,
+  color: number,
+  amount?: number,
+  sourceX?: number,
+  sourceY?: number,
+  context?: string
+): void {
+  state.events.push({ type, x, y, color, amount, sourceX, sourceY, context });
+}
+
+function setHitStop(state: GameState, duration: number): void {
+  state.hitStopTimer = Math.max(state.hitStopTimer, duration);
+}
+
+function hitStopForBlock(block: BlockId): number {
+  if (block === "aetherium" || block === "voltaic") {
+    return 0.06;
+  }
+  if (block === "shimmer") {
+    return 0.035;
+  }
+  if (block === "ferrite") {
+    return 0.018;
+  }
+  return 0.01;
+}
+
+function enemyDamage(enemy: EnemyState): number {
+  return ENEMY_CONFIG[enemy.kind].damage * (enemy.elite ? 1.4 : 1);
+}
+
+function enemyLabel(enemy: EnemyState): string {
+  const label = ENEMY_CONFIG[enemy.kind].label;
+  return enemy.elite ? `Elite ${label}` : label;
 }
 
 function normalize(vector: Vec2): Vec2 {

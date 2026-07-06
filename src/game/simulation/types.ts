@@ -7,6 +7,8 @@ export type UpgradeId = "laserPower" | "heatSink" | "magnetRadius" | "hull" | "e
 export type UnlockId = "dashModule" | "shieldEmitter" | "swarmBlast" | "piercerWeapon" | "scatterWeapon";
 export type WeaponId = "drillShot" | "piercer" | "scatter";
 export type AbilityId = "dash" | "shield" | "swarm";
+export type PowerDropId = "repairPack" | "coolantCell" | "overdriveCell" | "shieldCell";
+export type ShipId = "pickaxe" | "lance" | "titan";
 export type TerritoryId = "shimmerVeins" | "cinderHollows";
 export type MapVariantId = "ribbon" | "fracture" | "sink";
 export type ObjectiveItemId = "relayFrame" | "voltaicKeystone" | "cinderBrace";
@@ -66,6 +68,16 @@ export interface PlayerState {
   objectiveWaveCooldown: number;
   invulnerableTimer: number;
   collectionPulse: number;
+  killChain: number;
+  killChainTimer: number;
+  temporarySpeedBoostTimer: number;
+  weaponBoostTimer: number;
+  miningStreak: {
+    ore: OreId | null;
+    count: number;
+    timer: number;
+    magnetBoostTimer: number;
+  };
 }
 
 export interface InventoryState {
@@ -164,6 +176,8 @@ export interface UpgradeState {
   unlockedShopItems: UnlockId[];
   purchasedUnlocks: UnlockId[];
   equippedWeapon: WeaponId;
+  unlockedShips: ShipId[];
+  equippedShip: ShipId;
 }
 
 export interface EffectiveStats {
@@ -183,6 +197,9 @@ export interface ThreatState {
   max: number;
   mood: "quiet" | "waking" | "surging" | "breakout";
   zoneTimer: number;
+  directionAngle: number | null;
+  dangerSwellTriggered: boolean;
+  dangerSwellTimer: number;
 }
 
 export interface EnemyState {
@@ -197,6 +214,8 @@ export interface EnemyState {
   health: number;
   maxHealth: number;
   radius: number;
+  elite: boolean;
+  eliteTier: number | null;
   state: "idle" | "patrol" | "windup" | "dash" | "chase" | "pulsing";
   cooldown: number;
   timer: number;
@@ -207,7 +226,9 @@ export interface EnemyState {
 
 export interface PickupState {
   id: string;
-  ore: OreId;
+  kind: "ore" | "power";
+  ore?: OreId;
+  power?: PowerDropId;
   x: number;
   y: number;
   vx: number;
@@ -244,6 +265,7 @@ export interface ProjectileState {
   damage: number;
   color: number;
   pierces: number;
+  nearMissed?: boolean;
 }
 
 export interface BombState {
@@ -308,6 +330,7 @@ export interface GameEvent {
   type:
     | "tile-broken"
     | "pickup-collected"
+    | "power-pickup-collected"
     | "enemy-hit"
     | "enemy-killed"
     | "player-hit"
@@ -334,11 +357,17 @@ export interface GameEvent {
     | "craft-ready"
     | "extract-ready"
     | "store-called"
-    | "enemy-wave-started";
+    | "enemy-wave-started"
+    | "near-miss"
+    | "kill-chain-tier"
+    | "danger-swell";
   x: number;
   y: number;
   color: number;
   amount?: number;
+  sourceX?: number;
+  sourceY?: number;
+  context?: string;
 }
 
 export interface RunResult {
@@ -349,6 +378,7 @@ export interface RunResult {
   enemiesKilled: number;
   duration: number;
   creditsEarned: number;
+  chainCreditsEarned: number;
   voltrixCore: boolean;
   taskCompleted: boolean;
   activeTaskId: string | null;
@@ -374,6 +404,8 @@ export interface GameState {
   events: GameEvent[];
   status: RunStatus;
   runResult: RunResult | null;
+  hitStopTimer: number;
+  chainCreditsEarned: number;
   elapsed: number;
   minedBlocks: number;
   enemiesKilled: number;

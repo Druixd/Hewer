@@ -30,6 +30,8 @@ interface OreClusterRule {
   radius: number;
 }
 
+type EnemyDraft = Omit<EnemyState, "elite" | "eliteTier">;
+
 const ORE_CLUSTER_RULES: OreClusterRule[] = [
   {
     type: "aetherium",
@@ -156,7 +158,7 @@ export function createInitialEnemies(world: WorldState): EnemyState[] {
 
     const timerRoll = coordNoise(world.seed, enemyX, y, 208);
     const directionRoll = coordNoise(world.seed, y, enemyX, 209);
-    enemies.push({
+    enemies.push(applyEliteRoll(world.seed, {
       id: `enemy-${id}`,
       kind,
       x: xWorld,
@@ -174,7 +176,7 @@ export function createInitialEnemies(world: WorldState): EnemyState[] {
       direction: directionRoll > 0.5 ? 1 : -1,
       targetX: 0,
       targetY: 0
-    });
+    }, enemyX, y, 210));
     id += 1;
   }
 
@@ -250,7 +252,7 @@ function ensureStarterEnemyPocket(world: WorldState, enemies: EnemyState[], next
 
     const timerRoll = coordNoise(world.seed, position.tileX, position.tileY, 308);
     const directionRoll = coordNoise(world.seed, position.tileY, position.tileX, 309);
-    enemies.push({
+    enemies.push(applyEliteRoll(world.seed, {
       id: `starter-enemy-${id}`,
       kind,
       x: position.x,
@@ -268,11 +270,31 @@ function ensureStarterEnemyPocket(world: WorldState, enemies: EnemyState[], next
       direction: directionRoll > 0.5 ? 1 : -1,
       targetX: world.spawn.x,
       targetY: world.spawn.y
-    });
+    }, position.tileX, position.tileY, 311));
     id += 1;
   }
 
   return id;
+}
+
+function applyEliteRoll(seed: string, enemy: EnemyDraft, tileX: number, tileY: number, salt: number): EnemyState {
+  const elite = coordNoise(seed, tileX, tileY, salt) < 0.12;
+  if (!elite) {
+    return {
+      ...enemy,
+      elite: false,
+      eliteTier: null
+    };
+  }
+
+  return {
+    ...enemy,
+    elite: true,
+    eliteTier: 1,
+    health: enemy.health * 1.8,
+    maxHealth: enemy.maxHealth * 1.8,
+    radius: enemy.radius * 1.3
+  };
 }
 
 function findStarterEnemyPosition(

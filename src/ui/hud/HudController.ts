@@ -1,6 +1,6 @@
-import { CRAFT_RECIPES, ORE_CONFIG, ORG_TASKS, TERRITORY_CONFIG, UNLOCK_CONFIG, UPGRADE_CONFIG, WEAPON_CONFIG, upgradeCost, upgradeMaterialCost } from "../../game/content/config";
+import { CRAFT_RECIPES, ORE_CONFIG, ORG_TASKS, SHIP_CONFIG, TERRITORY_CONFIG, UNLOCK_CONFIG, UPGRADE_CONFIG, WEAPON_CONFIG, upgradeCost, upgradeMaterialCost } from "../../game/content/config";
 import { canCraftActiveTask, getActiveTask, getTaskGuidance } from "../../game/simulation/systems/progression";
-import type { CraftRecipe, GameState, InventoryCost, RunResult, TaskGuidanceState, UnlockId, UpgradeId, UpgradeState, WeaponId } from "../../game/simulation/types";
+import type { CraftRecipe, GameState, InventoryCost, OreId, PowerDropId, RunResult, ShipId, TaskGuidanceState, UnlockId, UpgradeId, UpgradeState, WeaponId } from "../../game/simulation/types";
 
 interface HudHandlers {
   sameSeed: () => void;
@@ -8,9 +8,17 @@ interface HudHandlers {
   buyUpgrade: (id: UpgradeId) => UpgradeState;
   buyUnlock: (id: UnlockId) => UpgradeState;
   equipWeapon: (id: WeaponId) => UpgradeState;
+  equipShip: (id: ShipId) => UpgradeState;
   craftObjective: () => UpgradeState;
   resume: () => void;
   closeSummary: (result: RunResult | null) => void;
+}
+
+interface PickupToastState {
+  element: HTMLElement;
+  count: number;
+  removeTimer: number;
+  leaveTimer: number | null;
 }
 
 let controller: HudController | null = null;
@@ -34,6 +42,8 @@ export class HudController {
   private lastTaskSignature = "";
   private activeServiceTab: "upgrades" | "unlocks" | "contract" = "upgrades";
   private lastSummaryProgress: UpgradeState | null = null;
+  private pickupToastSerial = 0;
+  private readonly pickupToasts = new Map<string, PickupToastState>();
 
   constructor(root: HTMLDivElement) {
     this.root = root;
@@ -47,12 +57,6 @@ export class HudController {
           <div class="meter-row">
             <div class="meter heat"><i data-meter="heat"></i></div>
             <b data-value="heat">0</b>
-          </div>
-          <div class="ore-row">
-            <div data-ore="ferrite"></div>
-            <div data-ore="shimmer"></div>
-            <div data-ore="voltaic"></div>
-            <div data-ore="aetherium"></div>
           </div>
           <div class="slot-row">
             <div class="slot"><span class="slot-key">MBL</span><span class="slot-name">DRILL</span></div>
@@ -98,12 +102,15 @@ export class HudController {
         <div class="hud-boss" data-panel="boss">
           <div class="meter boss"><i data-meter="boss"></i></div><b data-value="boss">0</b>
         </div>
-        <div class="dock-chip" data-panel="dock">E STORE</div>
         <div class="purchase-hint is-hidden" data-panel="purchase-hint">
           <span data-value="purchase-kicker">SERVICE BAY READY</span>
           <b data-value="purchase-title"></b>
           <em data-value="purchase-action"></em>
         </div>
+        <div class="reward-stack">
+          <div class="streak-chip is-hidden" data-panel="streak"></div>
+        </div>
+        <div class="pickup-toast-stack" data-panel="pickup-toasts"></div>
         
         <div class="hud-radar-wrapper">
           <div class="hud-radar-frame">
@@ -120,7 +127,6 @@ export class HudController {
     `;
 
     this.root.addEventListener("click", (event) => this.handleClick(event));
-    this.paintOreLabels();
   }
 
   setHandlers(handlers: HudHandlers): void {
@@ -138,6 +144,7 @@ export class HudController {
     this.renderAbilitySlots(state);
     this.renderBlastCharges(state);
     this.renderShieldState(state);
+    this.renderRewardHud(state);
     this.renderMissionIntro(state);
     this.renderPurchaseHint(progress, this.runSummaryVisible);
 
@@ -165,24 +172,12 @@ export class HudController {
     if (aethNode) aethNode.innerHTML = renderOreCount("aetherium", state.inventory.aetherium);
     if (ferrNode) ferrNode.innerHTML = renderOreCount("ferrite", state.inventory.ferrite);
 
-    for (const ore of Object.keys(ORE_CONFIG) as Array<keyof typeof ORE_CONFIG>) {
-      const node = this.root.querySelector<HTMLElement>(`[data-ore="${ore}"]`);
-      if (node) {
-        node.innerHTML = renderOreCount(ore, state.inventory[ore]);
-      }
-    }
-
     const bossPanel = this.root.querySelector<HTMLElement>('[data-panel="boss"]');
     if (bossPanel) {
       bossPanel.classList.toggle("is-hidden", !state.boss.active || state.boss.defeated);
     }
     setWidth(this.root, "boss", state.boss.maxHealth > 0 ? state.boss.health / state.boss.maxHealth : 0);
     setText(this.root, "boss", `${Math.ceil(state.boss.health)}`);
-
-    const dock = this.root.querySelector<HTMLElement>('[data-panel="dock"]');
-    if (dock) {
-      dock.classList.toggle("is-hidden", state.status !== "playing");
-    }
 
     this.renderTaskHud(progress, {
       cargoValue,
@@ -208,6 +203,148 @@ export class HudController {
   setPaused(paused: boolean): void {
     const panel = this.root.querySelector<HTMLElement>('[data-panel="pause"]');
     panel?.classList.toggle("is-hidden", !paused);
+  }
+
+  showPickupToast(kind: "ore" | "power", id: OreId | PowerDropId): void {
+    const stack = this.root.querySelector<HTMLElement>('[data-panel="pickup-toasts"]');
+    if (!stack) {
+      return;
+    }
+
+    const key = `${kind}:${id}`;
+    const existing = this.pickupToasts.get(key);
+    if (existing && existing.element.isConnected) {
+      existing.count += 1;
+      this.updatePickupToastContent(existing.element, kind, id, existing.count);
+      existing.element.classList.remove("is-leaving", "is-updated");
+      void existing.element.offsetWidth;
+      existing.element.classList.add("is-updated");
+      window.clearTimeout(existing.removeTimer);
+      if (existing.leaveTimer !== null) {
+        window.clearTimeout(existing.leaveTimer);
+        existing.leaveTimer = null;
+      }
+      existing.removeTimer = this.schedulePickupToastRemoval(key, existing);
+      stack.prepend(existing.element);
+      return;
+    }
+
+    const toast = document.createElement("div");
+    const serial = this.pickupToastSerial += 1;
+    toast.className = `pickup-toast ${kind}`;
+    toast.dataset.toast = `${serial}`;
+    toast.dataset.toastKey = key;
+    this.updatePickupToastContent(toast, kind, id, 1);
+
+    stack.prepend(toast);
+    const toastState: PickupToastState = {
+      element: toast,
+      count: 1,
+      removeTimer: 0,
+      leaveTimer: null
+    };
+    toastState.removeTimer = this.schedulePickupToastRemoval(key, toastState);
+    this.pickupToasts.set(key, toastState);
+
+    while (stack.children.length > 4) {
+      const last = stack.lastElementChild as HTMLElement | null;
+      if (!last) {
+        break;
+      }
+      this.removePickupToastState(last.dataset.toastKey ?? "");
+      last.remove();
+    }
+  }
+
+  showEnemyTakedownToast(enemyName: string): void {
+    const stack = this.root.querySelector<HTMLElement>('[data-panel="pickup-toasts"]');
+    if (!stack) {
+      return;
+    }
+
+    const label = enemyName.trim();
+    if (!label) {
+      return;
+    }
+
+    const key = `enemy:${label.toLowerCase()}`;
+    const existing = this.pickupToasts.get(key);
+    if (existing && existing.element.isConnected) {
+      existing.count += 1;
+      this.updateEnemyTakedownToastContent(existing.element, label, existing.count);
+      existing.element.classList.remove("is-leaving", "is-updated");
+      void existing.element.offsetWidth;
+      existing.element.classList.add("is-updated");
+      window.clearTimeout(existing.removeTimer);
+      if (existing.leaveTimer !== null) {
+        window.clearTimeout(existing.leaveTimer);
+        existing.leaveTimer = null;
+      }
+      existing.removeTimer = this.schedulePickupToastRemoval(key, existing);
+      stack.prepend(existing.element);
+      return;
+    }
+
+    const toast = document.createElement("div");
+    const serial = this.pickupToastSerial += 1;
+    toast.className = "pickup-toast enemy";
+    toast.dataset.toast = `${serial}`;
+    toast.dataset.toastKey = key;
+    this.updateEnemyTakedownToastContent(toast, label, 1);
+
+    stack.prepend(toast);
+    const toastState: PickupToastState = {
+      element: toast,
+      count: 1,
+      removeTimer: 0,
+      leaveTimer: null
+    };
+    toastState.removeTimer = this.schedulePickupToastRemoval(key, toastState);
+    this.pickupToasts.set(key, toastState);
+
+    while (stack.children.length > 4) {
+      const last = stack.lastElementChild as HTMLElement | null;
+      if (!last) {
+        break;
+      }
+      this.removePickupToastState(last.dataset.toastKey ?? "");
+      last.remove();
+    }
+  }
+
+  private updatePickupToastContent(toast: HTMLElement, kind: "ore" | "power", id: OreId | PowerDropId, count: number): void {
+    const amount = count > 1 ? count : 1;
+    toast.innerHTML = kind === "ore"
+      ? `${oreIcon(id as OreId)}<span><b>${escapeHtml(ORE_CONFIG[id as OreId].label)}</b><em>Collected +${amount}</em></span>`
+      : `${powerIcon(id as PowerDropId)}<span><b>${powerDropLabel(id as PowerDropId)}</b><em>${powerDropDetail(id as PowerDropId)} +${amount}</em></span>`;
+  }
+
+  private updateEnemyTakedownToastContent(toast: HTMLElement, enemyName: string, count: number): void {
+    const suffix = count > 1 ? ` +${count}` : "";
+    toast.innerHTML = `${enemyIcon()}<span><b>${escapeHtml(enemyName)}</b><em>Takedown${suffix}</em></span>`;
+  }
+
+  private schedulePickupToastRemoval(key: string, toastState: PickupToastState): number {
+    return window.setTimeout(() => {
+      toastState.element.classList.add("is-leaving");
+      toastState.leaveTimer = window.setTimeout(() => {
+        toastState.element.remove();
+        this.pickupToasts.delete(key);
+      }, 260);
+    }, 1500);
+  }
+
+  private removePickupToastState(key: string): void {
+    const toastState = this.pickupToasts.get(key);
+    if (!toastState) {
+      return;
+    }
+
+    window.clearTimeout(toastState.removeTimer);
+    if (toastState.leaveTimer !== null) {
+      window.clearTimeout(toastState.leaveTimer);
+    }
+    this.pickupToasts.delete(key);
   }
 
   private handleClick(event: MouseEvent): void {
@@ -275,22 +412,23 @@ export class HudController {
         }
       }
     }
+    if (action === "equip-ship") {
+      const id = button.dataset.ship as ShipId | undefined;
+      if (id) {
+        const progress = this.handlers.equipShip(id);
+        const activeResult = this.root.querySelector<HTMLElement>('[data-panel="summary"]')?.dataset.result;
+        if (activeResult) {
+          const result = JSON.parse(activeResult) as RunResult;
+          this.renderSummary(result, progress);
+        }
+      }
+    }
     if (action === "craft-objective") {
       const progress = this.handlers.craftObjective();
       const activeResult = this.root.querySelector<HTMLElement>('[data-panel="summary"]')?.dataset.result;
       if (activeResult) {
         const result = JSON.parse(activeResult) as RunResult;
         this.renderSummary(result, progress);
-      }
-    }
-  }
-
-  private paintOreLabels(): void {
-    for (const ore of Object.keys(ORE_CONFIG) as Array<keyof typeof ORE_CONFIG>) {
-      const node = this.root.querySelector<HTMLElement>(`[data-ore="${ore}"]`);
-      if (node) {
-        node.style.borderColor = ORE_CONFIG[ore].cssColor;
-        node.innerHTML = renderOreCount(ore, 0);
       }
     }
   }
@@ -446,6 +584,7 @@ export class HudController {
       .join("");
     const unlocks = renderUnlockShop(progress);
     const weapons = renderWeaponBay(progress);
+    const ships = renderShipBay(progress);
     const tab = this.activeServiceTab;
     const tabContent = tab === "upgrades"
       ? `
@@ -456,6 +595,10 @@ export class HudController {
       `
       : tab === "unlocks"
         ? `
+          <div class="ship-bay compact">
+            <div class="bay-label">Hewers</div>
+            <div class="ship-grid">${ships}</div>
+          </div>
           <div class="unlock-bay compact">
             <div class="bay-label">Unlocks</div>
             <div class="unlock-grid">${unlocks}</div>
@@ -555,6 +698,20 @@ export class HudController {
       panel.classList.add("is-progress-pulse");
     }
     this.lastTaskSignature = signature;
+  }
+
+  private renderRewardHud(state: GameState): void {
+    const streak = this.root.querySelector<HTMLElement>('[data-panel="streak"]');
+    if (streak) {
+      const active = state.player.miningStreak.ore && state.player.miningStreak.count >= 2 && state.player.miningStreak.timer > 0;
+      streak.classList.toggle("is-hidden", !active);
+      if (active && state.player.miningStreak.ore) {
+        const count = state.player.miningStreak.count;
+        const next = count < 5 ? 5 : 8;
+        const width = `${Math.min(1, count / next) * 100}%`;
+        streak.innerHTML = `${oreIcon(state.player.miningStreak.ore)}<b>${count}x</b><span>${ORE_CONFIG[state.player.miningStreak.ore].label}</span><i style="--value:${width}"></i>`;
+      }
+    }
   }
 }
 
@@ -696,6 +853,39 @@ function renderWeaponBay(progress: UpgradeState): string {
     .join("");
 }
 
+function renderShipBay(progress: UpgradeState): string {
+  return (Object.keys(SHIP_CONFIG) as ShipId[])
+    .map((id) => {
+      const config = SHIP_CONFIG[id];
+      const owned = progress.unlockedShips.includes(id);
+      const active = progress.equippedShip === id;
+      const disabled = !owned || active ? "disabled" : "";
+      const state = active ? "ACTIVE" : owned ? "EQUIP" : shipUnlockLabel(config.unlockTask);
+      return `
+        <button class="ship-node ${active ? "is-active" : ""} ${owned ? "is-owned" : ""}" type="button" data-action="equip-ship" data-ship="${id}" ${disabled}>
+          ${shipIcon(id)}
+          <span><b>${config.mk} ${escapeHtml(config.label)}</b><em>${escapeHtml(config.description)}</em></span>
+          <strong>${state}</strong>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function shipUnlockLabel(taskId: string | undefined): string {
+  if (taskId === "sv-relay-frame") {
+    return "RELAY";
+  }
+  if (taskId === "sv-voltaic-keystone") {
+    return "KEYSTONE";
+  }
+  return "LOCKED";
+}
+
+function shipIcon(id: ShipId): string {
+  return `<span class="ship-token ${id}" aria-hidden="true"><i></i><b></b></span>`;
+}
+
 interface PurchaseSuggestion {
   kind: "unlock" | "upgrade";
   title: string;
@@ -771,6 +961,40 @@ function renderOreCount(ore: keyof typeof ORE_CONFIG, count: number): string {
 
 function oreIcon(ore: keyof typeof ORE_CONFIG): string {
   return `<span class="ore-art ${ore}" aria-label="${escapeHtml(ORE_CONFIG[ore].label)}"></span>`;
+}
+
+function powerIcon(power: PowerDropId): string {
+  return `<span class="power-art ${power}" aria-label="${escapeHtml(powerDropLabel(power))}"></span>`;
+}
+
+function enemyIcon(): string {
+  return `<span class="enemy-art" aria-hidden="true"></span>`;
+}
+
+function powerDropLabel(power: PowerDropId): string {
+  if (power === "repairPack") {
+    return "Repair Pack";
+  }
+  if (power === "coolantCell") {
+    return "Coolant Cell";
+  }
+  if (power === "overdriveCell") {
+    return "Overdrive Cell";
+  }
+  return "Shield Cell";
+}
+
+function powerDropDetail(power: PowerDropId): string {
+  if (power === "repairPack") {
+    return "Hull restored";
+  }
+  if (power === "coolantCell") {
+    return "Heat dumped";
+  }
+  if (power === "overdriveCell") {
+    return "Weapon boosted";
+  }
+  return "Shield refilled";
 }
 
 function oreFromStepLabel(label: string): keyof typeof ORE_CONFIG | null {

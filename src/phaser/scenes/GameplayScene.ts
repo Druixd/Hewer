@@ -13,11 +13,12 @@ import {
   tryBuyUnlock,
   tryBuyUpgrade,
   tryCraftActiveTask,
+  tryEquipShip,
   tryEquipWeapon
 } from "../../game/simulation/systems/progression";
 import { updateGame } from "../../game/simulation/systems/update";
 import { coordNoise } from "../../game/simulation/random";
-import { TILE_SIZE, type BlockId, type GameEvent, type GameState, type InputActions, type UnlockId, type UpgradeState, type WeaponId } from "../../game/simulation/types";
+import { TILE_SIZE, type BlockId, type GameEvent, type GameState, type InputActions, type OreId, type PickupState, type PowerDropId, type ShipId, type UnlockId, type UpgradeState, type WeaponId } from "../../game/simulation/types";
 import { getTile, isSolid, worldBounds } from "../../game/simulation/world";
 import { getHudController } from "../../ui/hud/HudController";
 
@@ -28,6 +29,7 @@ const MINIMAP_ZOOM = 0.08;
 const MINIMAP_RADIUS = MINIMAP_SIZE / MINIMAP_ZOOM / 2;
 const MINIMAP_TILE_RANGE = Math.ceil(MINIMAP_RADIUS / TILE_SIZE) + 2;
 const TILE_VARIANT_COUNT = 4;
+const PLAYER_SHIP_VISUAL_SCALE = 0.84;
 
 export class GameplayScene extends Phaser.Scene {
   private state!: GameState;
@@ -45,6 +47,8 @@ export class GameplayScene extends Phaser.Scene {
   private tileGlows: Array<Phaser.GameObjects.Image[] | null> = [];
   private enemySprites = new Map<string, Phaser.GameObjects.Image>();
   private enemyGlowSprites = new Map<string, Phaser.GameObjects.Image>();
+  private enemyEliteRings = new Map<string, Phaser.GameObjects.Arc>();
+  private enemyEliteMarkers = new Map<string, Phaser.GameObjects.Triangle>();
   private pickupSprites = new Map<string, Phaser.GameObjects.Image>();
   private pickupGlowSprites = new Map<string, Phaser.GameObjects.Image>();
   private projectileSprites = new Map<string, { core: Phaser.GameObjects.Image; glow: Phaser.GameObjects.Image }>();
@@ -62,6 +66,8 @@ export class GameplayScene extends Phaser.Scene {
   private cavernGrid!: Phaser.GameObjects.Graphics;
   private parallaxCaveLayers: Phaser.GameObjects.Graphics[] = [];
   private moodOverlay!: Phaser.GameObjects.Rectangle;
+  private hullCriticalOverlay!: Phaser.GameObjects.Rectangle;
+  private atmosphereOverlay: HTMLDivElement | null = null;
   private visibilityVignette!: Phaser.GameObjects.Image;
   private extractionGlow!: Phaser.GameObjects.Image;
   private audioFeedback!: GameplayAudio;
@@ -98,6 +104,7 @@ export class GameplayScene extends Phaser.Scene {
 
     this.createWorldView();
     this.createActors();
+    this.createAtmosphereOverlay();
     this.audioFeedback = new GameplayAudio(this);
     this.configureCamera();
     this.configureHud();
@@ -108,6 +115,8 @@ export class GameplayScene extends Phaser.Scene {
     this.tileGlows = [];
     this.enemySprites.clear();
     this.enemyGlowSprites.clear();
+    this.enemyEliteRings.clear();
+    this.enemyEliteMarkers.clear();
     this.pickupSprites.clear();
     this.pickupGlowSprites.clear();
     this.projectileSprites.clear();
@@ -115,6 +124,8 @@ export class GameplayScene extends Phaser.Scene {
     this.bossHead = null;
     this.bossSegments = [];
     this.parallaxCaveLayers = [];
+    this.atmosphereOverlay?.remove();
+    this.atmosphereOverlay = null;
   }
 
   update(_time: number, deltaMs: number): void {
@@ -140,6 +151,7 @@ export class GameplayScene extends Phaser.Scene {
     this.drawMinimap();
     this.updateMoodPresentation();
     this.audioFeedback.updateMood(this.state.threat.mood);
+    this.audioFeedback.updateHull(this.state.player.hull / this.state.player.maxHull);
     this.handleEvents(this.state.events);
     hud.update(this.state, this.progress);
 
@@ -172,6 +184,27 @@ export class GameplayScene extends Phaser.Scene {
     this.minimapGraphics.clear();
     this.minimapGraphics.fillStyle(0x0a0908, 0.82);
     this.minimapGraphics.fillCircle(player.x, player.y, MINIMAP_RADIUS * 0.98);
+
+    if (this.state.threat.directionAngle !== null && this.state.threat.value >= this.state.threat.max * 0.5) {
+      const threatRatio = Phaser.Math.Clamp(this.state.threat.value / this.state.threat.max, 0, 1);
+      const pulse = 0.5 + Math.sin(this.state.elapsed * 6.5) * 0.5;
+      const color = threatRatio > 0.82 ? 0xc45a4a : 0xd4845a;
+      const lineLength = MINIMAP_RADIUS * (0.54 + threatRatio * 0.34);
+      this.minimapGraphics.lineStyle(16, color, 0.16 + pulse * 0.2 + threatRatio * 0.16);
+      this.minimapGraphics.lineBetween(
+        player.x,
+        player.y,
+        player.x + Math.cos(this.state.threat.directionAngle) * lineLength,
+        player.y + Math.sin(this.state.threat.directionAngle) * lineLength
+      );
+      this.minimapGraphics.lineStyle(4, 0xf0d38a, 0.28 + pulse * 0.26);
+      this.minimapGraphics.lineBetween(
+        player.x,
+        player.y,
+        player.x + Math.cos(this.state.threat.directionAngle) * lineLength,
+        player.y + Math.sin(this.state.threat.directionAngle) * lineLength
+      );
+    }
 
     this.minimapGraphics.lineStyle(8, 0x6a5a42, 0.40);
     for (let y = centerTileY - MINIMAP_TILE_RANGE; y <= centerTileY + MINIMAP_TILE_RANGE; y += 1) {
@@ -245,10 +278,11 @@ export class GameplayScene extends Phaser.Scene {
 
   private createWorldView(): void {
     const bounds = worldBounds(this.state.world);
-    this.backdropRect = this.add.rectangle(0, 0, bounds.width * 1.12, bounds.height * 1.12, 0x111826, 1)
+    this.backdropRect = this.add.rectangle(0, 0, 1, 1, 0x111826, 1)
       .setDepth(-8)
-      .setOrigin(0)
-      .setScrollFactor(0.04);
+      .setOrigin(0.5)
+      .setScrollFactor(0);
+    this.fitScreenOverlay(this.backdropRect, Math.max(this.scale.width, window.innerWidth), Math.max(this.scale.height, window.innerHeight));
     this.drawParallaxSpaceCave(bounds);
     this.drawCavernAtmosphere();
 
@@ -392,9 +426,15 @@ export class GameplayScene extends Phaser.Scene {
     this.objectiveGraphics = this.add.graphics().setDepth(7);
     this.moodOverlay = this.add.rectangle(0, 0, 1, 1, 0x000000, 0)
       .setDepth(6)
-      .setOrigin(0)
+      .setOrigin(0.5)
       .setScrollFactor(0);
-    this.moodOverlay.setSize(this.scale.width, this.scale.height);
+    this.hullCriticalOverlay = this.add.rectangle(0, 0, 1, 1, 0xc45a4a, 0)
+      .setDepth(19)
+      .setOrigin(0.5)
+      .setScrollFactor(0)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    this.fitScreenOverlay(this.moodOverlay, this.scale.width, this.scale.height);
+    this.fitScreenOverlay(this.hullCriticalOverlay, this.scale.width, this.scale.height);
     this.visibilityVignette = this.add.image(this.scale.width / 2, this.scale.height / 2, "fx.visibility.vignette")
       .setDepth(18)
       .setOrigin(0.5)
@@ -419,7 +459,7 @@ export class GameplayScene extends Phaser.Scene {
       .setTint(0xc4a86e)
       .setBlendMode(Phaser.BlendModes.ADD);
     this.reticle = this.add.image(this.state.player.x, this.state.player.y, TEXTURES.reticle).setDepth(20).setBlendMode(Phaser.BlendModes.ADD);
-    this.ship = this.add.image(this.state.player.x, this.state.player.y, TEXTURES.ship).setDepth(14);
+    this.ship = this.add.image(this.state.player.x, this.state.player.y, TEXTURES.ship(this.progress.equippedShip)).setDepth(14);
 
     // Local navigation graphics are rendered only by the minimap camera.
     this.minimapGraphics = this.add.graphics().setDepth(21);
@@ -431,6 +471,7 @@ export class GameplayScene extends Phaser.Scene {
     
     // Main camera follow configuration
     this.cameras.main.setBounds(0, 0, bounds.width, bounds.height);
+    this.cameras.main.setBackgroundColor(0x111826);
     this.cameras.main.startFollow(this.ship, true, 0.075, 0.075);
     this.cameras.main.setDeadzone(0, 0);
     this.cameras.main.setFollowOffset(0, 0);
@@ -459,6 +500,7 @@ export class GameplayScene extends Phaser.Scene {
     if (this.hazardGraphics) this.minimap.ignore(this.hazardGraphics);
     if (this.objectiveGraphics) this.minimap.ignore(this.objectiveGraphics);
     if (this.moodOverlay) this.minimap.ignore(this.moodOverlay);
+    if (this.hullCriticalOverlay) this.minimap.ignore(this.hullCriticalOverlay);
     if (this.visibilityVignette) this.minimap.ignore(this.visibilityVignette);
     if (this.extractionGlow) this.minimap.ignore(this.extractionGlow);
     if (this.playerLight) this.minimap.ignore(this.playerLight);
@@ -516,6 +558,17 @@ export class GameplayScene extends Phaser.Scene {
         this.state.events.push({ type: "weapon-switched", x: this.state.player.x, y: this.state.player.y, color: 0xe8c86a });
         return this.progress;
       },
+      equipShip: (id: ShipId) => {
+        const hullRatio = this.state.player.maxHull > 0 ? this.state.player.hull / this.state.player.maxHull : 1;
+        this.progress = tryEquipShip(this.progress, id);
+        this.state.upgrades = this.progress;
+        this.state.stats = effectiveStats(this.progress);
+        this.state.player.maxHull = this.state.stats.maxHull;
+        this.state.player.hull = Math.max(1, Math.min(this.state.player.maxHull, this.state.player.maxHull * hullRatio));
+        this.ship.setTexture(TEXTURES.ship(this.progress.equippedShip));
+        this.state.events.push({ type: "weapon-switched", x: this.state.player.x, y: this.state.player.y, color: 0x5ab8a8 });
+        return this.progress;
+      },
       craftObjective: () => {
         const wasReady = canCraftActiveTask(this.progress);
         this.progress = tryCraftActiveTask(this.progress);
@@ -553,14 +606,34 @@ export class GameplayScene extends Phaser.Scene {
     hud.setPaused(false);
   }
 
+  private createAtmosphereOverlay(): void {
+    this.atmosphereOverlay?.remove();
+    const app = document.querySelector<HTMLElement>("#app");
+    if (!app) {
+      return;
+    }
+
+    const overlay = document.createElement("div");
+    overlay.className = "game-atmosphere-overlay";
+    app.appendChild(overlay);
+    this.atmosphereOverlay = overlay;
+    this.events.once(Phaser.Scenes.Events.SHUTDOWN, () => {
+      overlay.remove();
+      if (this.atmosphereOverlay === overlay) {
+        this.atmosphereOverlay = null;
+      }
+    });
+  }
+
   private fitVisibilityVignette(width: number, height: number): void {
     if (!this.visibilityVignette) {
       return;
     }
 
-    this.visibilityVignette.setPosition(width / 2, height / 2);
+    const zoom = this.cameras.main.zoom || 1;
+    this.visibilityVignette.setPosition(width / (2 * zoom), height / (2 * zoom));
     const cover = Math.hypot(width, height) * 1.32;
-    this.visibilityVignette.setDisplaySize(cover, cover);
+    this.visibilityVignette.setDisplaySize(cover / zoom, cover / zoom);
   }
 
   private syncScreenSpaceLayout(width = Math.max(this.scale.width, window.innerWidth), height = Math.max(this.scale.height, window.innerHeight)): void {
@@ -577,9 +650,22 @@ export class GameplayScene extends Phaser.Scene {
     this.screenWidth = width;
     this.screenHeight = height;
     this.cameras.main.setViewport(0, 0, width, height);
-    this.moodOverlay?.setSize(width, height);
+    this.fitScreenOverlay(this.backdropRect, width, height);
+    this.fitScreenOverlay(this.moodOverlay, width, height);
+    this.fitScreenOverlay(this.hullCriticalOverlay, width, height);
     this.fitVisibilityVignette(width, height);
     this.minimap?.setPosition(width - MINIMAP_SIZE - MINIMAP_MARGIN, height - MINIMAP_SIZE - MINIMAP_MARGIN);
+  }
+
+  private fitScreenOverlay(overlay: Phaser.GameObjects.Rectangle | undefined, width: number, height: number): void {
+    if (!overlay) {
+      return;
+    }
+
+    const zoom = this.cameras.main.zoom || 1;
+    const bleed = 160 / zoom;
+    overlay.setPosition(width / (2 * zoom), height / (2 * zoom));
+    overlay.setSize(width / zoom + bleed * 2, height / zoom + bleed * 2);
   }
 
   private currentAimWorldPoint(): Phaser.Math.Vector2 {
@@ -640,7 +726,7 @@ export class GameplayScene extends Phaser.Scene {
     const player = this.state.player;
     this.ship.setPosition(player.x, player.y);
     this.ship.setRotation(player.angle);
-    this.ship.setScale(player.collectionPulse > 0 ? 1.08 : 1);
+    this.ship.setScale(PLAYER_SHIP_VISUAL_SCALE * (player.collectionPulse > 0 ? 1.08 : 1));
     this.ship.setAlpha(player.invulnerableTimer > 0 ? 0.72 : 1);
     this.playerLight.setPosition(player.x, player.y);
     const speed = Math.hypot(player.vx, player.vy);
@@ -700,14 +786,34 @@ export class GameplayScene extends Phaser.Scene {
       return;
     }
 
+    const swell = this.state.threat.dangerSwellTimer > 0 ? this.state.threat.dangerSwellTimer / 3 : 0;
+    let cssTint = "rgba(0, 0, 0, 0)";
     if (this.state.threat.mood === "breakout") {
-      this.moodOverlay.setFillStyle(0x4a1630, 0.14 + Math.sin(this.state.elapsed * 9) * 0.035);
+      this.moodOverlay.setFillStyle(0x4a1630, 0.14 + Math.sin(this.state.elapsed * 9) * 0.035 + swell * 0.08);
+      cssTint = `rgba(74, 22, 48, ${0.14 + Math.sin(this.state.elapsed * 9) * 0.035 + swell * 0.08})`;
     } else if (this.state.threat.mood === "surging") {
-      this.moodOverlay.setFillStyle(0x32150a, 0.09 + Math.sin(this.state.elapsed * 5) * 0.025);
+      this.moodOverlay.setFillStyle(0x32150a, 0.09 + Math.sin(this.state.elapsed * 5) * 0.025 + swell * 0.08);
+      cssTint = `rgba(50, 21, 10, ${0.09 + Math.sin(this.state.elapsed * 5) * 0.025 + swell * 0.08})`;
     } else if (this.state.threat.mood === "waking") {
-      this.moodOverlay.setFillStyle(0x1a1228, 0.055 + Math.sin(this.state.elapsed * 3) * 0.014);
+      this.moodOverlay.setFillStyle(0x1a1228, 0.055 + Math.sin(this.state.elapsed * 3) * 0.014 + swell * 0.04);
+      cssTint = `rgba(26, 18, 40, ${0.055 + Math.sin(this.state.elapsed * 3) * 0.014 + swell * 0.04})`;
     } else {
-      this.moodOverlay.setFillStyle(0x000000, 0.1);
+      this.moodOverlay.setFillStyle(0x000000, swell * 0.04);
+      cssTint = `rgba(0, 0, 0, ${swell * 0.04})`;
+    }
+    this.moodOverlay.setAlpha(0);
+    if (this.atmosphereOverlay) {
+      this.atmosphereOverlay.style.background = cssTint;
+    }
+
+    const hullRatio = this.state.player.hull / this.state.player.maxHull;
+    if (this.hullCriticalOverlay && hullRatio < 0.35) {
+      const danger = Phaser.Math.Clamp((0.35 - hullRatio) / 0.35, 0, 1);
+      const pulseRate = hullRatio < 0.25 ? 12 : 7;
+      const pulse = 0.5 + Math.sin(this.state.elapsed * pulseRate) * 0.5;
+      this.hullCriticalOverlay.setFillStyle(0xc45a4a, 0.035 + danger * 0.14 + pulse * danger * 0.045);
+    } else {
+      this.hullCriticalOverlay?.setFillStyle(0xc45a4a, 0);
     }
   }
 
@@ -756,6 +862,8 @@ export class GameplayScene extends Phaser.Scene {
       live.add(enemy.id);
       let sprite = this.enemySprites.get(enemy.id);
       let glow = this.enemyGlowSprites.get(enemy.id);
+      let eliteRing = this.enemyEliteRings.get(enemy.id);
+      let eliteMarker = this.enemyEliteMarkers.get(enemy.id);
       if (!sprite) {
         glow = this.add.image(enemy.x, enemy.y, "fx.glow.radial")
           .setDepth(10)
@@ -770,23 +878,57 @@ export class GameplayScene extends Phaser.Scene {
         this.minimap?.ignore(sprite); // Ignore enemies on minimap to keep it clean
       }
 
+      if (enemy.elite && !eliteRing) {
+        eliteRing = this.add.circle(enemy.x, enemy.y, enemy.radius + 6)
+          .setDepth(11)
+          .setFillStyle(0x000000, 0)
+          .setStrokeStyle(2, 0xf0d38a, 0.58);
+        eliteMarker = this.add.triangle(enemy.x, enemy.y - enemy.radius - 13, 0, 10, 7, 0, 14, 10, 0xf0d38a, 0.92)
+          .setDepth(13)
+          .setOrigin(0.5);
+        this.enemyEliteRings.set(enemy.id, eliteRing);
+        this.enemyEliteMarkers.set(enemy.id, eliteMarker);
+        this.minimap?.ignore(eliteRing);
+        this.minimap?.ignore(eliteMarker);
+      } else if (!enemy.elite && eliteRing) {
+        eliteRing.destroy();
+        eliteMarker?.destroy();
+        this.enemyEliteRings.delete(enemy.id);
+        this.enemyEliteMarkers.delete(enemy.id);
+      }
+
       const activePulse = enemy.state === "pulsing" || enemy.state === "windup" ? 0.12 : 0;
       const glowPulse = Math.sin(this.state.elapsed * 5 + enemy.timer) * 0.04;
       glow?.setPosition(enemy.x, enemy.y);
-      glow?.setScale((enemy.kind === "arcWarden" ? 1.18 : 0.86) + activePulse);
-      glow?.setAlpha(0.28 + activePulse + glowPulse);
+      glow?.setTint(enemy.elite ? 0xf0d38a : enemyGlowColor(enemy.kind));
+      glow?.setScale(((enemy.kind === "arcWarden" ? 1.18 : 0.86) + activePulse) * (enemy.elite ? 1.18 : 1));
+      glow?.setAlpha(0.28 + activePulse + glowPulse + (enemy.elite ? 0.1 : 0));
       sprite.setPosition(enemy.x, enemy.y);
       sprite.setRotation(enemy.kind === "prismStalker" ? Math.atan2(enemy.vy, enemy.vx) : enemy.timer);
       sprite.setAlpha(enemy.state === "windup" ? 0.72 : 1);
-      sprite.setScale(enemy.state === "pulsing" ? 1.08 : 1);
+      sprite.setScale((enemy.state === "pulsing" ? 1.08 : 1) * (enemy.elite ? 1.25 : 1));
+      if (enemy.elite) {
+        sprite.setTint(0xf0d38a);
+        eliteRing?.setPosition(enemy.x, enemy.y);
+        eliteRing?.setRadius(enemy.radius + 5 + Math.sin(this.state.elapsed * 5) * 1.5);
+        eliteRing?.setAlpha(0.44 + Math.sin(this.state.elapsed * 4) * 0.12);
+        eliteMarker?.setPosition(enemy.x, enemy.y - enemy.radius - 13);
+        eliteMarker?.setRotation(Math.sin(this.state.elapsed * 3) * 0.08);
+      } else {
+        sprite.clearTint();
+      }
     }
 
     for (const [id, sprite] of this.enemySprites) {
       if (!live.has(id)) {
         sprite.destroy();
         this.enemyGlowSprites.get(id)?.destroy();
+        this.enemyEliteRings.get(id)?.destroy();
+        this.enemyEliteMarkers.get(id)?.destroy();
         this.enemySprites.delete(id);
         this.enemyGlowSprites.delete(id);
+        this.enemyEliteRings.delete(id);
+        this.enemyEliteMarkers.delete(id);
       }
     }
   }
@@ -798,13 +940,14 @@ export class GameplayScene extends Phaser.Scene {
       let sprite = this.pickupSprites.get(pickup.id);
       let glow = this.pickupGlowSprites.get(pickup.id);
       if (!sprite) {
+        const pickupColor = colorForPickup(pickup);
         glow = this.add.image(pickup.x, pickup.y, "fx.glow.radial")
           .setDepth(9)
-          .setTint(oreGlowForPickup(pickup.ore))
+          .setTint(pickupColor)
           .setScale(0.54)
           .setAlpha(0.32)
           .setBlendMode(Phaser.BlendModes.ADD);
-        sprite = this.add.image(pickup.x, pickup.y, TEXTURES.pickup(pickup.ore)).setDepth(11);
+        sprite = this.add.image(pickup.x, pickup.y, textureForPickup(pickup)).setDepth(11);
         this.pickupSprites.set(pickup.id, sprite);
         this.pickupGlowSprites.set(pickup.id, glow);
         this.minimap?.ignore(glow);
@@ -1077,12 +1220,28 @@ export class GameplayScene extends Phaser.Scene {
       if (event.type === "tile-broken") {
         this.audioFeedback.play("tileBreak");
         this.spawnBurst(event.x, event.y, event.color, 10, 130);
-        this.cameras.main.shake(52, 0.0025);
+        if (event.color === 0x8a6db8 || event.color === 0x5ab8a8 || event.color === 0xc47a8a) {
+          this.spawnPulseRing(event.x, event.y, event.color, 260);
+        }
+        this.cameraPunch(event.x, event.y, event.color === 0xc47a8a || event.color === 0x5ab8a8 ? 15 : 7);
+        this.cameras.main.shake(36, 0.0015);
       }
 
       if (event.type === "pickup-collected") {
         this.audioFeedback.play("pickup");
         this.spawnBurst(event.x, event.y, event.color, 4, 70);
+        if (event.context) {
+          getHudController().showPickupToast("ore", event.context as OreId);
+        }
+      }
+
+      if (event.type === "power-pickup-collected") {
+        this.audioFeedback.play("powerPickup");
+        this.spawnBurst(event.x, event.y, event.color, 8, 110);
+        this.spawnGlowPulse(event.x, event.y, event.color, 1.05, 180);
+        if (event.context) {
+          getHudController().showPickupToast("power", event.context as PowerDropId);
+        }
       }
 
       if (event.type === "task-progress") {
@@ -1109,13 +1268,20 @@ export class GameplayScene extends Phaser.Scene {
       if (event.type === "enemy-killed") {
         this.audioFeedback.play("enemyKill");
         this.spawnBurst(event.x, event.y, event.color, 16, 180);
-        this.cameras.main.shake(92, 0.004);
+        this.spawnPulseRing(event.x, event.y, event.color, 300);
+        this.cameraPunch(event.x, event.y, 18);
+        this.cameras.main.shake(70, 0.003);
+        if (event.context) {
+          getHudController().showEnemyTakedownToast(event.context);
+        }
       }
 
       if (event.type === "player-hit") {
         this.audioFeedback.play("damage");
         this.spawnBurst(this.state.player.x, this.state.player.y, event.color, 9, 85);
-        this.cameras.main.shake(90, 0.006);
+        this.spawnDamageEdgeFlash(event);
+        this.cameraPunch(event.sourceX ?? event.x, event.sourceY ?? event.y, 20);
+        this.cameras.main.shake(74, 0.0045);
       }
 
       if (event.type === "overheat") {
@@ -1179,6 +1345,8 @@ export class GameplayScene extends Phaser.Scene {
       if (event.type === "boss-hit") {
         this.audioFeedback.play("bossHit");
         this.spawnBurst(event.x, event.y, event.color, 3, 58);
+        this.spawnPulseRing(event.x, event.y, event.color, 240);
+        this.cameraPunch(event.x, event.y, 16);
       }
 
       if (event.type === "boss-defeated") {
@@ -1219,6 +1387,17 @@ export class GameplayScene extends Phaser.Scene {
         this.audioFeedback.play("dangerSwell");
         this.spawnGlowPulse(event.x, event.y, event.color, 1.7, 260);
         this.cameras.main.shake(110, 0.0028);
+      }
+
+      if (event.type === "near-miss") {
+        this.audioFeedback.play("nearMiss");
+        this.spawnNearMissFeedback(event.x, event.y);
+        this.spawnGlowPulse(this.state.player.x, this.state.player.y, event.color, 0.55, 130);
+      }
+
+      if (event.type === "danger-swell") {
+        this.audioFeedback.play("dangerSwell");
+        this.cameras.main.shake(190, 0.003);
       }
     }
   }
@@ -1297,7 +1476,7 @@ export class GameplayScene extends Phaser.Scene {
     const startY = y - 160;
     const dockX = x - 54;
     const dockY = y - 42;
-    const shuttle = this.add.image(startX, startY, TEXTURES.ship)
+    const shuttle = this.add.image(startX, startY, TEXTURES.ship("pickaxe"))
       .setDepth(32)
       .setScale(0.58)
       .setAlpha(0)
@@ -1354,6 +1533,109 @@ export class GameplayScene extends Phaser.Scene {
       onComplete: () => glow.destroy()
     });
   }
+
+  private spawnPulseRing(x: number, y: number, color: number, duration: number): void {
+    const ring = this.add.graphics()
+      .setDepth(28)
+      .setAlpha(0.86)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    ring.lineStyle(3, color, 0.92);
+    ring.strokeCircle(0, 0, 18);
+    ring.setPosition(x, y);
+    this.minimap?.ignore(ring);
+
+    this.tweens.add({
+      targets: ring,
+      scale: 3.2,
+      alpha: 0,
+      duration,
+      ease: "Cubic.easeOut",
+      onComplete: () => ring.destroy()
+    });
+  }
+
+  private cameraPunch(x: number, y: number, strength: number): void {
+    const dx = x - this.state.player.x;
+    const dy = y - this.state.player.y;
+    const length = Math.hypot(dx, dy) || 1;
+    const offset = {
+      x: Phaser.Math.Clamp((-dx / length) * strength, -28, 28),
+      y: Phaser.Math.Clamp((-dy / length) * strength, -28, 28)
+    };
+    this.cameras.main.setFollowOffset(offset.x, offset.y);
+    this.tweens.add({
+      targets: offset,
+      x: 0,
+      y: 0,
+      duration: 120,
+      ease: "Cubic.easeOut",
+      onUpdate: () => this.cameras.main.setFollowOffset(offset.x, offset.y),
+      onComplete: () => this.cameras.main.setFollowOffset(0, 0)
+    });
+  }
+
+  private spawnDamageEdgeFlash(event: GameEvent): void {
+    const sourceX = event.sourceX ?? event.x;
+    const sourceY = event.sourceY ?? event.y;
+    const dx = sourceX - this.state.player.x;
+    const dy = sourceY - this.state.player.y;
+    const horizontal = Math.abs(dx) >= Math.abs(dy);
+    const zoom = this.cameras.main.zoom || 1;
+    const width = this.scale.width / zoom;
+    const height = this.scale.height / zoom;
+    const thickness = 64 / zoom;
+    const bleed = 120 / zoom;
+    const flash = horizontal
+      ? this.add.rectangle(dx >= 0 ? width + bleed - thickness / 2 : -bleed + thickness / 2, height / 2, thickness + bleed, height + bleed * 2, 0xc45a4a, 0.24)
+      : this.add.rectangle(width / 2, dy >= 0 ? height + bleed - thickness / 2 : -bleed + thickness / 2, width + bleed * 2, thickness + bleed, 0xc45a4a, 0.24);
+    flash.setDepth(82).setScrollFactor(0).setBlendMode(Phaser.BlendModes.ADD);
+    this.tweens.add({
+      targets: flash,
+      alpha: 0,
+      duration: 220,
+      ease: "Quad.easeOut",
+      onComplete: () => flash.destroy()
+    });
+  }
+
+  private spawnNearMissFeedback(x: number, y: number): void {
+    const streak = this.add.graphics()
+      .setDepth(31)
+      .setAlpha(0.9)
+      .setBlendMode(Phaser.BlendModes.ADD);
+    streak.lineStyle(4, 0xf0e4cc, 0.84);
+    streak.lineBetween(-18, 0, 18, 0);
+    streak.setPosition(x, y);
+    streak.setRotation(this.state.player.angle + Math.PI / 2);
+    this.minimap?.ignore(streak);
+    this.tweens.add({
+      targets: streak,
+      alpha: 0,
+      scaleX: 1.8,
+      duration: 180,
+      ease: "Quad.easeOut",
+      onComplete: () => streak.destroy()
+    });
+
+    const text = this.add.text(x, y - 26, "CLOSE", {
+      fontFamily: "Bahnschrift, DIN Condensed, Aptos, sans-serif",
+      fontSize: "12px",
+      fontStyle: "900",
+      color: "#f0e4cc",
+      stroke: "#120b08",
+      strokeThickness: 3
+    }).setDepth(32).setOrigin(0.5);
+    this.minimap?.ignore(text);
+    this.tweens.add({
+      targets: text,
+      y: y - 44,
+      alpha: 0,
+      duration: 420,
+      ease: "Quad.easeOut",
+      onComplete: () => text.destroy()
+    });
+  }
+
 }
 
 type AudioCue =
@@ -1361,6 +1643,7 @@ type AudioCue =
   | "tileHit"
   | "tileBreak"
   | "pickup"
+  | "powerPickup"
   | "orderTick"
   | "missionStart"
   | "objectiveFocus"
@@ -1374,6 +1657,8 @@ type AudioCue =
   | "overheat"
   | "damage"
   | "enemyKill"
+  | "nearMiss"
+  | "heartbeat"
   | "dangerSwell"
   | "bossBreakout"
   | "bossHit"
@@ -1383,6 +1668,7 @@ class GameplayAudio {
   private readonly cooldowns = new Map<AudioCue, number>();
   private unlocked = false;
   private nextRumbleAt = 0;
+  private nextHeartbeatAt = 0;
 
   constructor(private readonly scene: Phaser.Scene) {
     this.scene.input.once("pointerdown", () => {
@@ -1426,6 +1712,25 @@ class GameplayAudio {
     }
   }
 
+  updateHull(hullRatio: number): void {
+    if (!this.unlocked || hullRatio >= 0.25) {
+      return;
+    }
+
+    const now = this.scene.time.now;
+    if (now < this.nextHeartbeatAt) {
+      return;
+    }
+
+    const context = this.audioContext();
+    if (context) {
+      const intensity = Phaser.Math.Clamp((0.25 - hullRatio) / 0.25, 0, 1);
+      playTone(context, 38, 0.1, 0.025 + intensity * 0.035, "sine");
+      playNoise(context, 0.055, 0.012 + intensity * 0.018, 190);
+    }
+    this.nextHeartbeatAt = now + 260 + hullRatio * 1200;
+  }
+
   play(cue: AudioCue, volume?: number): void {
     if (!this.unlocked) {
       return;
@@ -1460,6 +1765,7 @@ function audioCueConfig(cue: AudioCue): { volume: number; cooldown: number } {
     tileHit: { volume: 0.16, cooldown: 58 },
     tileBreak: { volume: 0.24, cooldown: 72 },
     pickup: { volume: 0.13, cooldown: 42 },
+    powerPickup: { volume: 0.18, cooldown: 56 },
     orderTick: { volume: 0.12, cooldown: 110 },
     missionStart: { volume: 0.22, cooldown: 900 },
     objectiveFocus: { volume: 0.08, cooldown: 280 },
@@ -1473,6 +1779,8 @@ function audioCueConfig(cue: AudioCue): { volume: number; cooldown: number } {
     overheat: { volume: 0.18, cooldown: 300 },
     damage: { volume: 0.24, cooldown: 190 },
     enemyKill: { volume: 0.2, cooldown: 82 },
+    nearMiss: { volume: 0.11, cooldown: 140 },
+    heartbeat: { volume: 0.12, cooldown: 250 },
     dangerSwell: { volume: 0.2, cooldown: 650 },
     bossBreakout: { volume: 0.34, cooldown: 1200 },
     bossHit: { volume: 0.14, cooldown: 130 },
@@ -1497,6 +1805,10 @@ function synthCue(context: AudioContext, cue: AudioCue, baseVolume: number): voi
   } else if (cue === "pickup") {
     playTone(context, 420 * pitch, 0.09, volume * 0.34, "triangle");
     playTone(context, 640 * pitch, 0.12, volume * 0.24, "sine", 0.035);
+  } else if (cue === "powerPickup") {
+    playTone(context, 260 * pitch, 0.1, volume * 0.36, "triangle");
+    playTone(context, 520 * pitch, 0.14, volume * 0.28, "triangle", 0.03);
+    playTone(context, 780 * pitch, 0.12, volume * 0.16, "sine", 0.075);
   } else if (cue === "orderTick" || cue === "objectiveFocus") {
     playTone(context, 260 * pitch, 0.08, volume * 0.32, "triangle");
     playTone(context, 380 * pitch, 0.1, volume * 0.16, "sine", 0.04);
@@ -1516,6 +1828,11 @@ function synthCue(context: AudioContext, cue: AudioCue, baseVolume: number): voi
   } else if (cue === "explosion" || cue === "enemyKill") {
     playTone(context, (cue === "explosion" ? 52 : 72) * pitch, 0.23, volume * 0.48, "sine");
     playNoise(context, cue === "explosion" ? 0.24 : 0.12, volume * 0.46, cue === "explosion" ? 420 : 680);
+  } else if (cue === "nearMiss") {
+    playNoise(context, 0.07, volume * 0.34, 1100);
+    playTone(context, 280 * pitch, 0.08, volume * 0.24, "triangle");
+  } else if (cue === "heartbeat") {
+    playTone(context, 38 * pitch, 0.1, volume * 0.44, "sine");
   } else if (cue === "overheat") {
     playNoise(context, 0.26, volume * 0.42, 760);
     playTone(context, 92 * pitch, 0.2, volume * 0.18, "triangle");
@@ -1621,14 +1938,33 @@ function oreGlowForTile(block: BlockId): number | null {
   return null;
 }
 
-function oreGlowForPickup(ore: string): number {
-  if (ore === "ferrite") {
-    return 0xc4a86e;
+function textureForPickup(pickup: PickupState): string {
+  if (pickup.kind === "power" && pickup.power) {
+    return TEXTURES.powerPickup(pickup.power);
   }
-  if (ore === "shimmer") {
+  return TEXTURES.pickup((pickup.ore ?? "ferrite") as OreId);
+}
+
+function colorForPickup(pickup: PickupState): number {
+  if (pickup.kind === "power") {
+    if (pickup.power === "repairPack") {
+      return 0xc45a4a;
+    }
+    if (pickup.power === "coolantCell") {
+      return 0x5ab8a8;
+    }
+    if (pickup.power === "overdriveCell") {
+      return 0xe8c86a;
+    }
     return 0x8a6db8;
   }
-  if (ore === "voltaic") {
+  if (pickup.ore === "ferrite") {
+    return 0xc4a86e;
+  }
+  if (pickup.ore === "shimmer") {
+    return 0x8a6db8;
+  }
+  if (pickup.ore === "voltaic") {
     return 0x5ab8a8;
   }
   return 0xc47a8a;

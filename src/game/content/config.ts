@@ -11,6 +11,7 @@ import type {
   TerritoryId,
   UpgradeId,
   UnlockId,
+  ShipId,
   WeaponId
 } from "../simulation/types";
 
@@ -74,6 +75,21 @@ export interface WeaponConfig {
   heatMax: number;
   spread: number;
   pierces: number;
+}
+
+export interface ShipConfig {
+  id: ShipId;
+  label: string;
+  mk: string;
+  description: string;
+  unlockTask?: string;
+  statScale: {
+    laserDps: number;
+    heatCapacity: number;
+    maxHull: number;
+    moveSpeed: number;
+    dashDistance: number;
+  };
 }
 
 export interface TerritoryConfig {
@@ -360,6 +376,50 @@ export const WEAPON_CONFIG: Record<WeaponId, WeaponConfig> = {
     heatMax: 11,
     spread: 0.18,
     pierces: 0
+  }
+};
+
+export const SHIP_CONFIG: Record<ShipId, ShipConfig> = {
+  pickaxe: {
+    id: "pickaxe",
+    label: "Pickaxe",
+    mk: "MK-I",
+    description: "Balanced starter Hewer.",
+    statScale: {
+      laserDps: 1,
+      heatCapacity: 1,
+      maxHull: 1,
+      moveSpeed: 1,
+      dashDistance: 1
+    }
+  },
+  lance: {
+    id: "lance",
+    label: "Lance",
+    mk: "MK-II",
+    description: "Fast fragile striker rewarded by Relay Frame.",
+    unlockTask: "sv-relay-frame",
+    statScale: {
+      laserDps: 1.12,
+      heatCapacity: 0.94,
+      maxHull: 0.82,
+      moveSpeed: 1.18,
+      dashDistance: 1.14
+    }
+  },
+  titan: {
+    id: "titan",
+    label: "Titan",
+    mk: "MK-III",
+    description: "Heavy armored miner rewarded by Voltaic Keystone.",
+    unlockTask: "sv-voltaic-keystone",
+    statScale: {
+      laserDps: 1.18,
+      heatCapacity: 1.1,
+      maxHull: 1.28,
+      moveSpeed: 0.86,
+      dashDistance: 0.9
+    }
   }
 };
 

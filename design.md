@@ -48,6 +48,8 @@ Playable ships are called Hewers.
 - MK-II "Lance": fast, fragile, high DPS ship for later.
 - MK-III "Titan": slow armor/drill ship for later.
 
+Hewer visuals should evolve as a readable top-down modular ship family, but external spaceship sheets are silhouette reference only. In-game ships should read as compact sleek angular manta/delta craft rather than large or bulky fighters: swept wings kept tight to the body, dark underside fins, colored top panels, a centered cyan canopy, sharp drill-nose directionality, warm cream edge plating, and compact rear engine machinery. MK-I Pickaxe uses teal/copper mining panels, MK-II Lance is the sharpest gold/cyan high-speed silhouette, and MK-III Titan uses violet/magenta armored panels while staying streamlined. MK-II is rewarded by completing the Relay Frame contract, and MK-III is rewarded by completing the Voltaic Keystone contract.
+
 Core controls:
 
 - WASD / Arrow Keys: move relative to cursor direction. W/Up moves toward the cursor, S/Down reverses, and A/D or Left/Right strafe.
@@ -60,6 +62,8 @@ Core controls:
 ## Mining And Collection
 
 Blocks have durability and break under sustained laser fire. Ore blocks drop mineral pickups that magnetize to the ship inside the magnet radius. Collection should feel fast and satisfying with sparkle trails, ship pulses, and compact inventory feedback.
+
+Some drops are field support pickups instead of cargo. Repair packs restore hull, coolant cells dump heat and clear overheat, overdrive cells briefly improve weapon tempo/output, and shield cells refill shield capacity and reduce shield downtime. These should stay rarer than ore and read as emergency survival tools, not as a second currency. They use the same magnet behavior as ore pickups so collection remains fast and readable.
 
 Core minerals:
 
@@ -162,6 +166,16 @@ Lighting should fake depth before attempting expensive true normal-map rendering
 Player movement trails should read as clean velocity-aligned energy streaks, not smoke or expanding bubble particles. The trail should stay thin, readable, and attached to ship motion so it supports speed feedback without covering cave detail.
 
 Terrain tiles should move toward the generated dark sci-fi tileset direction: compact black-core blocks with luminous material edges, readable destructible damage, and distinct ore identities. Shimmer Veins terrain uses purple-blue ancient/cave blocks, cyan crystal fractures, electric voltaic seams, warm gold ferrite veins, and magenta organic aetherium hazards. Early Cinder Hollows terrain can reuse the same block IDs with red-orange cinder shell styling for basalt and ancient blocks until full Cinder-specific resources exist.
+
+## Gameplay Impact, Reward Feedback, And Danger Cues
+
+Impact feedback should make mining and combat feel heavier without hiding the playfield. Short hit-stop, camera punches, pulse rings, bursts, and warm low-pitch audio are reserved for meaningful events: ore breaks, enemy kills, player damage, chain thresholds, and boss-pressure spikes. Boss hits should keep audio, pulse, and camera feedback without freezing time so sustained Voltrix attacks stay fluid. When the Hewer takes a valid attack, it should receive a slight velocity push away from the attack source so damage has physical read without stealing control. Routine projectile impacts can stay small.
+
+Reward feedback should remain compact, stateful, and mining-led. Ore collection streaks and material progress may surface as small instrument-style HUD chips, and enemy takedowns may show a compact named toast, but broad combat callouts, killfeed entries, and arcade kill-chain language should stay out of the normal mining loop. Contract material counts remain the clearest reward signal.
+
+Repeated collection feedback for the same ore or field pickup should update one existing toast with a refreshed count and a short pulse instead of stacking duplicate rows. The player should read this as an instrument counter changing, not as a feed of repeated receipts.
+
+Danger feedback should give the player anticipation and recovery reads. Low hull uses a red screen-space pressure overlay and heartbeat pulse, damage flashes from the incoming side, near misses create a short movement reward, and high threat points the local radar toward the likely boss approach. These cues should intensify the survival-space tone while staying readable on mobile and desktop.
 
 ## Mission Direction, Combat Feel, And Audio Rework
 
