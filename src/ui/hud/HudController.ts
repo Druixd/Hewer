@@ -47,7 +47,6 @@ export class HudController {
   private lastAbilitySignature = "";
   private lastMissionIntroSignature = "";
   private lastPurchaseSignature = "";
-  private lastRewardSignature = "";
   private readonly nodeCache = new Map<string, HTMLElement | null>();
   private activeServiceTab: "upgrades" | "unlocks" | "contract" = "upgrades";
   private lastSummaryProgress: UpgradeState | null = null;
@@ -116,9 +115,6 @@ export class HudController {
           <b data-value="purchase-title"></b>
           <em data-value="purchase-action"></em>
         </div>
-        <div class="reward-stack">
-          <div class="streak-chip is-hidden" data-panel="streak"></div>
-        </div>
         <div class="pickup-toast-stack" data-panel="pickup-toasts"></div>
         
         <div class="hud-radar-wrapper">
@@ -153,7 +149,6 @@ export class HudController {
     this.renderAbilitySlots(state);
     this.renderBlastCharges(state);
     this.renderShieldState(state);
-    this.renderRewardHud(state);
     this.renderMissionIntro(state);
     this.renderPurchaseHint(progress, this.runSummaryVisible);
 
@@ -753,26 +748,6 @@ export class HudController {
     this.lastTaskSignature = signature;
   }
 
-  private renderRewardHud(state: GameState): void {
-    const streak = this.getNode('[data-panel="streak"]');
-    if (streak) {
-      const active = state.player.miningStreak.ore && state.player.miningStreak.count >= 2 && state.player.miningStreak.timer > 0;
-      const signature = active && state.player.miningStreak.ore
-        ? `${state.player.miningStreak.ore}|${state.player.miningStreak.count}`
-        : "hidden";
-      if (signature === this.lastRewardSignature) {
-        return;
-      }
-      this.lastRewardSignature = signature;
-      streak.classList.toggle("is-hidden", !active);
-      if (active && state.player.miningStreak.ore) {
-        const count = state.player.miningStreak.count;
-        const next = count < 5 ? 5 : 8;
-        const width = `${Math.min(1, count / next) * 100}%`;
-        streak.innerHTML = `${oreIcon(state.player.miningStreak.ore)}<b>${count}x</b><span>${ORE_CONFIG[state.player.miningStreak.ore].label}</span><i style="--value:${width}"></i>`;
-      }
-    }
-  }
 }
 
 function setWidth(root: HTMLElement, key: string, value: number): void {

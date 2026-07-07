@@ -3,6 +3,7 @@ import "./styles.css";
 import { BootScene } from "./phaser/scenes/BootScene";
 import { GameplayScene } from "./phaser/scenes/GameplayScene";
 import { HudController, setHudController } from "./ui/hud/HudController";
+import { showLoadingOverlay } from "./ui/loadingOverlay";
 
 const gameRoot = document.querySelector<HTMLDivElement>("#game-root");
 const uiRoot = document.querySelector<HTMLDivElement>("#ui-root");
@@ -13,6 +14,7 @@ if (!gameRoot || !uiRoot) {
 
 const hud = new HudController(uiRoot);
 setHudController(hud);
+showLoadingOverlay("CALIBRATING CAVE SCAN");
 
 const game = new Phaser.Game({
   type: Phaser.AUTO,
@@ -29,6 +31,9 @@ const game = new Phaser.Game({
     arcade: {
       debug: false
     }
+  },
+  audio: {
+    noAudio: true
   },
   input: {
     mouse: {

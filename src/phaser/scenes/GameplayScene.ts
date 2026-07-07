@@ -21,6 +21,7 @@ import { coordNoise } from "../../game/simulation/random";
 import { TILE_SIZE, type BlockId, type GameEvent, type GameState, type InputActions, type OreId, type PickupState, type PowerDropId, type ShipId, type UnlockId, type UpgradeState, type WeaponId } from "../../game/simulation/types";
 import { getTile, isSolid, worldBounds } from "../../game/simulation/world";
 import { getHudController } from "../../ui/hud/HudController";
+import { hideLoadingOverlay, updateLoadingOverlay } from "../../ui/loadingOverlay";
 
 type KeyMap = Record<"W" | "A" | "S" | "D" | "UP" | "DOWN" | "LEFT" | "RIGHT" | "SPACE" | "SHIFT" | "ESC" | "E" | "F3", Phaser.Input.Keyboard.Key>;
 const MINIMAP_SIZE = 110;
@@ -41,6 +42,13 @@ const TERRAIN_CHUNK_SIZE = 16;
 const TERRAIN_TILE_OVERLAP = 1;
 const FIXED_QUALITY_LEVEL: 1 = 1;
 const ORE_GLOW_POOL_SIZE = 72;
+const CRITICAL_TERRAIN_CHUNK_DISTANCE = 3;
+const CRITICAL_TERRAIN_CHUNKS_PER_FRAME = 3;
+const BACKGROUND_TERRAIN_STAMP_DELAY_MS = 6000;
+const BACKGROUND_TERRAIN_FRAME_BUDGET_MS = 0.75;
+const BACKGROUND_TERRAIN_MAX_CHUNKS_PER_FRAME = 1;
+const BACKGROUND_TERRAIN_INTERVAL_MS = 180;
+const BACKGROUND_TERRAIN_MAX_PLAYER_SPEED = 72;
 let glowAlphaScale = 0.58;
 
 type FrameProfileKey = "sim" | "tiles" | "actors" | "transient" | "minimap" | "presentation" | "events" | "hud";
@@ -54,6 +62,7 @@ interface TerrainChunk {
   endTileX: number;
   endTileY: number;
   view: Phaser.GameObjects.RenderTexture;
+  stamped: boolean;
 }
 
 interface OreGlowCandidate {
@@ -85,6 +94,7 @@ export class GameplayScene extends Phaser.Scene {
   private caveEdgeChunks = new Map<string, Phaser.GameObjects.Graphics>();
   private caveEdgeAlpha = 0.78;
   private terrainChunks: TerrainChunk[] = [];
+  private terrainStampQueue: TerrainChunk[] = [];
   private oreGlowPool: Phaser.GameObjects.Image[] = [];
   private oreGlowCandidates: OreGlowCandidate[] = [];
   private enemySprites = new Map<string, Phaser.GameObjects.Image>();
@@ -141,18 +151,50 @@ export class GameplayScene extends Phaser.Scene {
   private screenHeight = 0;
   private pendingStoreResultAt = 0;
   private storeShuttle: Phaser.GameObjects.Image | null = null;
+  private runReady = false;
+  private startupToken = 0;
+  private backgroundTerrainStartsAt = 0;
+  private nextBackgroundTerrainStampAt = 0;
 
   constructor() {
     super("GameplayScene");
   }
 
   create(data?: { seed?: string }): void {
+    const token = this.startupToken + 1;
+    this.startupToken = token;
+    this.runReady = false;
+    updateLoadingOverlay("CALIBRATING CAVE SCAN", 0.32);
     this.resetViewCaches();
+    this.input.mouse?.disableContextMenu();
+    this.keys = this.input.keyboard!.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,SHIFT,ESC,E,F3") as KeyMap;
+    this.time.delayedCall(0, () => {
+      void this.initializeRun(data, token);
+    });
+  }
+
+  private async initializeRun(data: { seed?: string } | undefined, token: number): Promise<void> {
+    if (token !== this.startupToken) {
+      return;
+    }
+
+    updateLoadingOverlay("READING CONTRACT TELEMETRY", 0.36);
+    await this.waitForNextFrame();
+    if (token !== this.startupToken) {
+      return;
+    }
+
     this.progress = loadProgress();
     if (!data?.seed) {
       this.progress = prepareProgressForNewRun(this.progress);
     }
     const seed = data?.seed ?? createRunSeed(this.progress);
+    updateLoadingOverlay("GENERATING CAVE ROUTE", 0.42);
+    await this.waitForNextFrame();
+    if (token !== this.startupToken) {
+      return;
+    }
+
     this.state = createGameState(seed, this.progress);
     this.progress = this.state.upgrades;
     this.resultBanked = false;
@@ -163,6 +205,8 @@ export class GameplayScene extends Phaser.Scene {
     this.screenHeight = 0;
     this.pendingStoreResultAt = 0;
     this.storeShuttle = null;
+    this.backgroundTerrainStartsAt = 0;
+    this.nextBackgroundTerrainStampAt = 0;
     this.lastVisibilityCenterTileX = Number.NaN;
     this.lastVisibilityCenterTileY = Number.NaN;
     this.lastVisibilityDrawAt = 0;
@@ -182,20 +226,37 @@ export class GameplayScene extends Phaser.Scene {
     this.renderStressLevel = 0;
     this.applyAdaptiveQuality();
 
-    this.input.mouse?.disableContextMenu();
-    this.keys = this.input.keyboard!.addKeys("W,A,S,D,UP,DOWN,LEFT,RIGHT,SPACE,SHIFT,ESC,E,F3") as KeyMap;
+    await this.createWorldView(token);
+    if (token !== this.startupToken) {
+      return;
+    }
 
-    this.createWorldView();
+    updateLoadingOverlay("ARMING FIELD INSTRUMENTS", 0.92);
+    await this.waitForNextFrame();
+    if (token !== this.startupToken) {
+      return;
+    }
+
     this.createActors();
     this.createAtmosphereOverlay();
     this.audioFeedback = new GameplayAudio(this);
     this.configureCamera();
     this.configureHud();
+    this.runReady = true;
+    this.backgroundTerrainStartsAt = this.time.now + BACKGROUND_TERRAIN_STAMP_DELAY_MS;
+    this.nextBackgroundTerrainStampAt = this.backgroundTerrainStartsAt;
+    updateLoadingOverlay("DEPLOYING HEWER", 1);
+    window.setTimeout(() => {
+      if (token === this.startupToken && this.runReady) {
+        hideLoadingOverlay();
+      }
+    }, 80);
   }
 
   private resetViewCaches(): void {
     this.terrainChunks.forEach((chunk) => chunk.view.destroy());
     this.terrainChunks = [];
+    this.terrainStampQueue = [];
     this.oreGlowPool.forEach((glow) => glow.destroy());
     this.oreGlowPool = [];
     this.oreGlowCandidates = [];
@@ -220,9 +281,14 @@ export class GameplayScene extends Phaser.Scene {
   }
 
   update(_time: number, deltaMs: number): void {
+    if (!this.runReady) {
+      return;
+    }
+
     const hud = getHudController();
     this.updatePerformanceMonitor(deltaMs);
     this.frameProfile = this.createEmptyFrameProfile();
+    this.continueTerrainStamping();
     if (Phaser.Input.Keyboard.JustDown(this.keys.F3)) {
       this.toggleFpsOverlay();
     }
@@ -333,6 +399,10 @@ export class GameplayScene extends Phaser.Scene {
 
   private applyAdaptiveQuality(): void {
     glowAlphaScale = 0.58;
+  }
+
+  private async waitForNextFrame(): Promise<void> {
+    await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()));
   }
 
   private toggleFpsOverlay(): void {
@@ -498,7 +568,7 @@ export class GameplayScene extends Phaser.Scene {
     return dx * dx + dy * dy <= MINIMAP_RADIUS * MINIMAP_RADIUS;
   }
 
-  private createWorldView(): void {
+  private async createWorldView(token: number): Promise<void> {
     const bounds = worldBounds(this.state.world);
     this.backdropRect = this.add.rectangle(0, 0, 1, 1, 0x111826, 1)
       .setDepth(-8)
@@ -507,43 +577,91 @@ export class GameplayScene extends Phaser.Scene {
     this.fitScreenOverlay(this.backdropRect, Math.max(this.scale.width, window.innerWidth), Math.max(this.scale.height, window.innerHeight));
     this.drawParallaxSpaceCave(bounds);
     this.drawCavernAtmosphere();
-    this.createTerrainChunks();
+    await this.createTerrainChunks(token);
+    if (token !== this.startupToken) {
+      return;
+    }
     this.createOreGlowPool();
+    updateLoadingOverlay("MAPPING CAVE EDGES", 0.86);
+    await this.waitForNextFrame();
+    if (token !== this.startupToken) {
+      return;
+    }
     this.drawCaveEdges();
   }
 
-  private createTerrainChunks(): void {
+  private async createTerrainChunks(token: number): Promise<void> {
     this.terrainChunks = [];
+    this.terrainStampQueue = [];
     const chunkColumns = Math.ceil(this.state.world.width / TERRAIN_CHUNK_SIZE);
     const chunkRows = Math.ceil(this.state.world.height / TERRAIN_CHUNK_SIZE);
+    const spawnChunkX = Math.floor((this.state.world.spawn.x / TILE_SIZE) / TERRAIN_CHUNK_SIZE);
+    const spawnChunkY = Math.floor((this.state.world.spawn.y / TILE_SIZE) / TERRAIN_CHUNK_SIZE);
+    const chunkCoords: Array<{ chunkX: number; chunkY: number; distance: number }> = [];
 
     for (let chunkY = 0; chunkY < chunkRows; chunkY += 1) {
       for (let chunkX = 0; chunkX < chunkColumns; chunkX += 1) {
-        const startTileX = chunkX * TERRAIN_CHUNK_SIZE;
-        const startTileY = chunkY * TERRAIN_CHUNK_SIZE;
-        const endTileX = Math.min(this.state.world.width, startTileX + TERRAIN_CHUNK_SIZE);
-        const endTileY = Math.min(this.state.world.height, startTileY + TERRAIN_CHUNK_SIZE);
-        const width = (endTileX - startTileX) * TILE_SIZE;
-        const height = (endTileY - startTileY) * TILE_SIZE;
-        const view = this.add.renderTexture(startTileX * TILE_SIZE, startTileY * TILE_SIZE, width, height)
-          .setDepth(2)
-          .setOrigin(0, 0)
-          .setVisible(false)
-          .setAlpha(0);
-
-        const chunk = {
+        chunkCoords.push({
           chunkX,
           chunkY,
-          startTileX,
-          startTileY,
-          endTileX,
-          endTileY,
-          view
-        };
-        this.terrainChunks.push(chunk);
-        this.redrawTerrainChunk(chunk);
+          distance: Math.abs(chunkX - spawnChunkX) + Math.abs(chunkY - spawnChunkY)
+        });
       }
     }
+
+    chunkCoords.sort((a, b) => a.distance - b.distance || a.chunkY - b.chunkY || a.chunkX - b.chunkX);
+    const criticalChunks: TerrainChunk[] = [];
+    const backgroundChunks: TerrainChunk[] = [];
+
+    for (const { chunkX, chunkY, distance } of chunkCoords) {
+      if (token !== this.startupToken) {
+        return;
+      }
+
+      const startTileX = chunkX * TERRAIN_CHUNK_SIZE;
+      const startTileY = chunkY * TERRAIN_CHUNK_SIZE;
+      const endTileX = Math.min(this.state.world.width, startTileX + TERRAIN_CHUNK_SIZE);
+      const endTileY = Math.min(this.state.world.height, startTileY + TERRAIN_CHUNK_SIZE);
+      const width = (endTileX - startTileX) * TILE_SIZE;
+      const height = (endTileY - startTileY) * TILE_SIZE;
+      const view = this.add.renderTexture(startTileX * TILE_SIZE, startTileY * TILE_SIZE, width, height)
+        .setDepth(2)
+        .setOrigin(0, 0)
+        .setVisible(false)
+        .setAlpha(0);
+
+      const chunk = {
+        chunkX,
+        chunkY,
+        startTileX,
+        startTileY,
+        endTileX,
+        endTileY,
+        view,
+        stamped: false
+      };
+      this.terrainChunks.push(chunk);
+      if (distance <= CRITICAL_TERRAIN_CHUNK_DISTANCE) {
+        criticalChunks.push(chunk);
+      } else {
+        backgroundChunks.push(chunk);
+      }
+    }
+
+    const criticalTotal = criticalChunks.length;
+    for (let index = 0; index < criticalTotal; index += 1) {
+      if (token !== this.startupToken) {
+        return;
+      }
+
+      this.redrawTerrainChunk(criticalChunks[index]);
+      if ((index + 1) % CRITICAL_TERRAIN_CHUNKS_PER_FRAME === 0 || index === criticalTotal - 1) {
+        updateLoadingOverlay("STAMPING STARTER CAVE", 0.48 + ((index + 1) / Math.max(1, criticalTotal)) * 0.24);
+        await this.waitForNextFrame();
+      }
+    }
+
+    this.terrainStampQueue = backgroundChunks;
   }
 
   private redrawTerrainChunk(chunk: TerrainChunk): void {
@@ -569,6 +687,36 @@ export class GameplayScene extends Phaser.Scene {
             tint: 0xffffff
           }
         );
+      }
+    }
+    chunk.stamped = true;
+  }
+
+  private continueTerrainStamping(): void {
+    if (
+      this.terrainStampQueue.length === 0
+      || this.time.now < this.backgroundTerrainStartsAt
+      || this.time.now < this.nextBackgroundTerrainStampAt
+    ) {
+      return;
+    }
+
+    const playerSpeed = Math.hypot(this.state.player.vx, this.state.player.vy);
+    if (this.frameMsLastValue > 18 || playerSpeed > BACKGROUND_TERRAIN_MAX_PLAYER_SPEED) {
+      this.nextBackgroundTerrainStampAt = this.time.now + BACKGROUND_TERRAIN_INTERVAL_MS;
+      return;
+    }
+
+    const startedAt = performance.now();
+    this.nextBackgroundTerrainStampAt = this.time.now + BACKGROUND_TERRAIN_INTERVAL_MS;
+    for (let count = 0; count < BACKGROUND_TERRAIN_MAX_CHUNKS_PER_FRAME && this.terrainStampQueue.length > 0; count += 1) {
+      const chunk = this.terrainStampQueue.shift();
+      if (!chunk || chunk.stamped) {
+        continue;
+      }
+      this.redrawTerrainChunk(chunk);
+      if (performance.now() - startedAt >= BACKGROUND_TERRAIN_FRAME_BUDGET_MS) {
+        return;
       }
     }
   }
@@ -1113,6 +1261,9 @@ export class GameplayScene extends Phaser.Scene {
         && chunkTop <= worldView.bottom + TERRAIN_CULL_MARGIN;
       chunk.view.setVisible(visible);
       if (visible) {
+        if (!chunk.stamped) {
+          this.redrawTerrainChunk(chunk);
+        }
         chunk.view.setAlpha(1);
       }
     }
@@ -1631,6 +1782,9 @@ export class GameplayScene extends Phaser.Scene {
   }
 
   private syncTilesFromEvents(events: GameEvent[]): void {
+    const dirtyTerrainChunks = new Set<TerrainChunk>();
+    const dirtyCaveEdgeChunks = new Set<string>();
+
     for (const event of events) {
       if (event.type !== "tile-broken") {
         continue;
@@ -1640,11 +1794,21 @@ export class GameplayScene extends Phaser.Scene {
       const ty = Math.floor(event.y / TILE_SIZE);
       const chunk = this.terrainChunkAt(tx, ty);
       if (chunk) {
-        this.redrawTerrainChunk(chunk);
+        dirtyTerrainChunks.add(chunk);
       }
 
-      this.refreshCaveEdgesNearTile(tx, ty);
+      for (let y = ty - 1; y <= ty + 1; y += 1) {
+        for (let x = tx - 1; x <= tx + 1; x += 1) {
+          dirtyCaveEdgeChunks.add(`${Math.floor(x / CAVE_EDGE_CHUNK_SIZE)},${Math.floor(y / CAVE_EDGE_CHUNK_SIZE)}`);
+        }
+      }
     }
+
+    dirtyTerrainChunks.forEach((chunk) => this.redrawTerrainChunk(chunk));
+    dirtyCaveEdgeChunks.forEach((key) => {
+      const [chunkX, chunkY] = key.split(",").map(Number);
+      this.redrawCaveEdgeChunk(chunkX, chunkY);
+    });
   }
 
   private handleEvents(events: GameEvent[]): void {
@@ -2100,18 +2264,27 @@ type AudioCue =
 class GameplayAudio {
   private readonly cooldowns = new Map<AudioCue, number>();
   private unlocked = false;
+  private context: AudioContext | null = null;
   private nextRumbleAt = 0;
   private nextHeartbeatAt = 0;
 
   constructor(private readonly scene: Phaser.Scene) {
     this.scene.input.once("pointerdown", () => {
-      this.unlocked = true;
-      resumeAudioContext(this.scene.sound);
+      this.unlockAudio();
     });
     this.scene.input.keyboard?.once("keydown", () => {
-      this.unlocked = true;
-      resumeAudioContext(this.scene.sound);
+      this.unlockAudio();
     });
+  }
+
+  private unlockAudio(): void {
+    this.unlocked = true;
+    if (!this.context) {
+      this.context = new AudioContext();
+    }
+    if (this.context.state === "suspended") {
+      void this.context.resume();
+    }
   }
 
   updateMood(mood: GameState["threat"]["mood"]): void {
@@ -2184,11 +2357,7 @@ class GameplayAudio {
   }
 
   private audioContext(): AudioContext | null {
-    const sound = this.scene.sound;
-    if ("context" in sound && sound.context instanceof AudioContext) {
-      return sound.context;
-    }
-    return null;
+    return this.context;
   }
 }
 
@@ -2347,12 +2516,6 @@ function playNoise(context: AudioContext, duration: number, volume: number, freq
   filter.connect(gain);
   gain.connect(context.destination);
   source.start();
-}
-
-function resumeAudioContext(soundManager: Phaser.Sound.BaseSoundManager): void {
-  if ("context" in soundManager && soundManager.context instanceof AudioContext) {
-    void soundManager.context.resume();
-  }
 }
 
 function oreGlowForTile(block: BlockId): number | null {

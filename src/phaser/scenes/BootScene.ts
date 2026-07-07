@@ -6,6 +6,7 @@ import {
   generatedTextureKeys,
   type BakedTexturePack
 } from "../boot/createTextures";
+import { updateLoadingOverlay } from "../../ui/loadingOverlay";
 
 export class BootScene extends Phaser.Scene {
   constructor() {
@@ -13,17 +14,24 @@ export class BootScene extends Phaser.Scene {
   }
 
   create(): void {
+    updateLoadingOverlay("CALIBRATING CAVE SCAN", 0.04);
     void this.prepareTextures();
   }
 
   private async prepareTextures(): Promise<void> {
+    updateLoadingOverlay("FORGING FIELD TEXTURES", 0.12);
     await this.loadBakedTexturePack();
     createGeneratedTextures(this);
+    updateLoadingOverlay("LOCKING TERRAIN ATLAS", 0.3);
     this.maybeExportTexturePack();
     this.scene.start("GameplayScene");
   }
 
   private async loadBakedTexturePack(): Promise<void> {
+    if (!shouldLoadBakedTexturePack()) {
+      return;
+    }
+
     const pack = await fetchBakedTexturePack();
     if (!pack) {
       return;
@@ -64,6 +72,11 @@ export class BootScene extends Phaser.Scene {
     anchor.click();
     URL.revokeObjectURL(url);
   }
+}
+
+function shouldLoadBakedTexturePack(): boolean {
+  const params = new URLSearchParams(window.location.search);
+  return params.has("loadBakedTextures");
 }
 
 async function fetchBakedTexturePack(): Promise<BakedTexturePack | null> {

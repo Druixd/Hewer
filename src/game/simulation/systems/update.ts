@@ -31,6 +31,8 @@ const SWARM_BOMB_DAMAGE = 42;
 const SWARM_BOMB_TILE_DAMAGE = 34;
 const SWARM_BOMB_RADIUS = 74;
 const SWARM_BOMB_COLOR = 0xd4845a;
+const HOSTILE_PROJECTILE_TILE_DAMAGE_SCALE = 2;
+const SPARK_SAC_TILE_DAMAGE = 28;
 const OBJECTIVE_TARGET_RADIUS_TILES = 34;
 const OBJECTIVE_TARGET_LIMIT = 42;
 const OBJECTIVE_TARGET_CACHE_TILE_STEP = 3;
@@ -368,10 +370,14 @@ function explodeSwarmBomb(state: GameState, bomb: BombState, bombIndex: number):
 }
 
 function damageTilesInExplosion(state: GameState, x: number, y: number): void {
-  const minTileX = Math.floor((x - SWARM_BOMB_RADIUS) / TILE_SIZE);
-  const maxTileX = Math.floor((x + SWARM_BOMB_RADIUS) / TILE_SIZE);
-  const minTileY = Math.floor((y - SWARM_BOMB_RADIUS) / TILE_SIZE);
-  const maxTileY = Math.floor((y + SWARM_BOMB_RADIUS) / TILE_SIZE);
+  damageTilesInRadius(state, x, y, SWARM_BOMB_RADIUS, SWARM_BOMB_TILE_DAMAGE);
+}
+
+function damageTilesInRadius(state: GameState, x: number, y: number, radius: number, baseDamage: number): void {
+  const minTileX = Math.floor((x - radius) / TILE_SIZE);
+  const maxTileX = Math.floor((x + radius) / TILE_SIZE);
+  const minTileY = Math.floor((y - radius) / TILE_SIZE);
+  const maxTileY = Math.floor((y + radius) / TILE_SIZE);
 
   for (let tileY = minTileY; tileY <= maxTileY; tileY += 1) {
     for (let tileX = minTileX; tileX <= maxTileX; tileX += 1) {
@@ -388,13 +394,13 @@ function damageTilesInExplosion(state: GameState, x: number, y: number): void {
         y: tile.y * TILE_SIZE + TILE_SIZE / 2
       };
       const dist = distance({ x, y }, tileCenter);
-      if (dist > SWARM_BOMB_RADIUS) {
+      if (dist > radius) {
         continue;
       }
 
-      const falloff = 1 - clamp(dist / SWARM_BOMB_RADIUS, 0, 0.88);
+      const falloff = 1 - clamp(dist / radius, 0, 0.88);
       const centerPunch = dist < TILE_SIZE * 1.25 ? 1.35 : 1;
-      damageTile(state, tile, SWARM_BOMB_TILE_DAMAGE * (0.32 + falloff) * centerPunch);
+      damageTile(state, tile, baseDamage * (0.32 + falloff) * centerPunch);
     }
   }
 }
@@ -496,6 +502,7 @@ function updateProjectiles(state: GameState, dt: number): void {
     const tile = tileAtWorld(state.world, nextX, nextY);
     if (projectile.owner === "enemy") {
       if (isSolid(tile)) {
+        damageTile(state, tile, projectile.damage * HOSTILE_PROJECTILE_TILE_DAMAGE_SCALE);
         addEvent(state, "projectile-hit", nextX, nextY, projectile.color, projectile.damage);
         state.projectiles.splice(index, 1);
         continue;
@@ -1216,6 +1223,7 @@ function maybeDropEnemyPower(state: GameState, enemy: EnemyState): void {
 }
 
 function explodeSparkSac(state: GameState, enemy: EnemyState): void {
+  damageTilesInRadius(state, enemy.x, enemy.y, 82, SPARK_SAC_TILE_DAMAGE);
   const hazard: HazardState = {
     id: `spark-${state.elapsed.toFixed(3)}-${enemy.id}`,
     kind: "sparkExplosion",

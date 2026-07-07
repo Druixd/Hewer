@@ -80,6 +80,64 @@ canvas {
   user-select: none;
 }
 
+.loading-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: grid;
+  place-items: center;
+  background:
+    linear-gradient(180deg, rgba(6, 7, 8, 0.92), rgba(8, 7, 6, 0.84)),
+    radial-gradient(circle at 50% 42%, rgba(90, 184, 168, 0.12), transparent 42%);
+  pointer-events: auto;
+}
+
+.loading-panel {
+  display: grid;
+  gap: 8px;
+  width: min(360px, calc(100vw - 36px));
+  padding: 14px 16px 15px;
+  border: 1px solid rgba(232, 216, 180, 0.26);
+  background: rgba(8, 7, 6, 0.86);
+  box-shadow:
+    inset 0 0 0 1px rgba(212, 132, 90, 0.1),
+    0 18px 42px rgba(0, 0, 0, 0.46);
+}
+
+.loading-kicker,
+.loading-detail {
+  color: rgba(232, 216, 180, 0.62);
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.loading-title {
+  color: #f0d38a;
+  font-size: 16px;
+  font-weight: 900;
+  line-height: 1;
+  text-transform: uppercase;
+  text-shadow: 0 0 10px rgba(232, 200, 106, 0.28);
+}
+
+.loading-rail {
+  height: 8px;
+  overflow: hidden;
+  border: 1px solid rgba(90, 184, 168, 0.46);
+  background: rgba(0, 0, 0, 0.74);
+}
+
+.loading-rail span {
+  display: block;
+  width: var(--value);
+  height: 100%;
+  background: repeating-linear-gradient(90deg, var(--cyan) 0px, var(--cyan) 7px, transparent 7px, transparent 9px);
+  box-shadow: 0 0 12px rgba(90, 184, 168, 0.44);
+  transition: width 90ms ease-out;
+}
+
 .hud-shell {
   position: absolute;
   inset: 0;
@@ -737,16 +795,6 @@ canvas {
   right: 36px;
 }
 
-.reward-stack {
-  position: absolute;
-  right: 146px;
-  bottom: 58px;
-  display: grid;
-  gap: 6px;
-  width: 142px;
-  pointer-events: none;
-}
-
 .pickup-toast-stack {
   position: absolute;
   left: 50%;
@@ -920,58 +968,6 @@ canvas {
     transform: translateY(-6px) scale(0.98);
     opacity: 0;
   }
-}
-
-.streak-chip {
-  position: relative;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  align-items: center;
-  gap: 6px;
-  min-height: 30px;
-  padding: 5px 7px;
-  overflow: hidden;
-  border: 1px solid rgba(232, 200, 106, 0.42);
-  background: rgba(8, 7, 6, 0.82);
-  color: var(--text);
-}
-
-.streak-chip b {
-  color: #f0d38a;
-  font-size: 14px;
-  font-weight: 900;
-  line-height: 1;
-}
-
-.streak-chip span {
-  min-width: 0;
-  overflow: hidden;
-  color: rgba(232, 216, 180, 0.78);
-  font-size: 10px;
-  font-weight: 900;
-  line-height: 1;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-
-.streak-chip {
-  border-color: rgba(90, 184, 168, 0.42);
-}
-
-.streak-chip .ore-art {
-  width: 16px;
-  height: 16px;
-}
-
-.streak-chip i {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  display: block;
-  height: 2px;
-  background: linear-gradient(90deg, var(--cyan) var(--value), transparent var(--value));
 }
 
 @keyframes purchaseHintPulse {
@@ -1885,12 +1881,6 @@ button:disabled {
     font-size: 10px;
     flex-wrap: wrap;
     justify-content: flex-end;
-  }
-
-  .reward-stack {
-    right: 10px;
-    bottom: 254px;
-    width: 138px;
   }
 
   .run-grid {
